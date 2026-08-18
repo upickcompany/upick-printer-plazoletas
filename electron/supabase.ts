@@ -139,54 +139,94 @@ async function schedulePendingOrders(restaurantId: string) {
   }
 }
 
-export async function setupSupabaseRealtime(onStatusChange: (status: 'connected' | 'disconnected' | 'error') => void) {
-  const restaurantId = store.get('restaurantId');
+export async function setupSupabaseRealtime(onStatusChange: (status: 'connected' | 'disconnected' | 'error', message?: string) => void) {
+  const email = store.get('email');
+  const password = store.get('password');
 
-  if (!restaurantId) {
-    console.log('No Restaurant ID configured, skipping Realtime setup');
+  if (!email || !password) {
+    console.log('No hay credenciales guardadas, omitiendo setup de Realtime');
     onStatusChange('disconnected');
     return;
   }
 
-  // Si ya había un canal, lo cerramos antes de abrir uno nuevo
-  if (realtimeChannel) {
-    await supabase.removeChannel(realtimeChannel);
-  }
-
-  console.log(`Setting up Supabase Realtime for Restaurant ID: ${restaurantId}`);
-
-  // Fetch pending orders on startup
-  schedulePendingOrders(restaurantId);
-
-  realtimeChannel = supabase.channel(`public:PedidoRestaurante:restauranteId=eq.${restaurantId}`)
-    .on(
-      'postgres_changes',
-      {
-        event: '*', // Escuchar INSERT y UPDATE
-        schema: 'public',
-        table: 'PedidoRestaurante',
-        filter: `restauranteId=eq.${restaurantId}`
-      },
-      async (payload) => {
-        console.log('Cambio detectado en PedidoRestaurante:', payload);
-        
-        const newRecord = payload.new as any;
-
-        // Solo nos interesa si tiene printStatus = PENDING
-        if (newRecord && newRecord.printStatus === 'PENDING') {
-          console.log(`¡Orden detectada como PENDING!`);
-          await handleOrder(newRecord.id);
-        }
-      }
-    )
-    .subscribe((status) => {
-      console.log('Supabase Subscription status:', status);
-      if (status === 'SUBSCRIBED') {
-        onStatusChange('connected');
-      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-        onStatusChange('error');
-      } else {
-        onStatusChange('disconnected');
-      }
+  try {
+    // 1. Iniciar sesión
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
     });
+
+    if (authError || !authData.user) {
+      console.error('Error de autenticación:', authError?.message);
+      onStatusChange('error', 'Credenciales incorrectas');
+      return;
+    }
+
+    // 2. Obtener el restauranteId del usuario
+    const { data: userData, error: userError } = await supabase
+      .from('Usuario')
+      .select('restauranteId, Restaurante(nombreSucursal)')
+      .eq('id', authData.user.id)
+      .single();
+
+    if (userError || !userData?.restauranteId) {
+      console.error('El usuario no tiene un restaurante asignado:', userError?.message);
+      onStatusChange('error', 'El usuario no tiene un restaurante asignado');
+      return;
+    }
+
+    const restaurantId = userData.restauranteId;
+    
+    // Guardar el restaurantId en el store para compatibilidad con otras funciones
+    store.set('restaurantId', restaurantId);
+    
+    // Opcional: imprimir el nombre de la sucursal
+    const sucursalNombre = (userData.Restaurante as any)?.nombreSucursal || 'Desconocida';
+    console.log(`Conectado exitosamente a la sucursal: ${sucursalNombre} (${restaurantId})`);
+
+    // Si ya había un canal, lo cerramos antes de abrir uno nuevo
+    if (realtimeChannel) {
+      await supabase.removeChannel(realtimeChannel);
+    }
+
+    console.log(`Configurando Supabase Realtime para Restaurante ID: ${restaurantId}`);
+
+    // Fetch pending orders on startup
+    schedulePendingOrders(restaurantId);
+
+    realtimeChannel = supabase.channel(`public:PedidoRestaurante:restauranteId=eq.${restaurantId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*', // Escuchar INSERT y UPDATE
+          schema: 'public',
+          table: 'PedidoRestaurante',
+          filter: `restauranteId=eq.${restaurantId}`
+        },
+        async (payload) => {
+          console.log('Cambio detectado en PedidoRestaurante:', payload);
+          
+          const newRecord = payload.new as any;
+
+          // Solo nos interesa si tiene printStatus = PENDING
+          if (newRecord && newRecord.printStatus === 'PENDING') {
+            console.log(`¡Orden detectada como PENDING!`);
+            await handleOrder(newRecord.id);
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log('Supabase Subscription status:', status);
+        if (status === 'SUBSCRIBED') {
+          onStatusChange('connected', sucursalNombre);
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          onStatusChange('error', 'Error en canal de realtime');
+        } else {
+          onStatusChange('disconnected');
+        }
+      });
+  } catch (err) {
+    console.error('Error inesperado durante el setup de Supabase:', err);
+    onStatusChange('error', 'Error inesperado de conexión');
+  }
 }

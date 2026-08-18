@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
 
 function App() {
-  const [restaurantId, setRestaurantId] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [sucursal, setSucursal] = useState('')
   const [connectionType, setConnectionType] = useState<'network' | 'usb'>('network')
   const [printerIp, setPrinterIp] = useState('192.168.40.18')
   const [printerPort, setPrinterPort] = useState('9100')
@@ -15,7 +17,7 @@ function App() {
   useEffect(() => {
     // Load config on mount
     window.ipcRenderer.invoke('get-config').then((config: any) => {
-      if (config.restaurantId) setRestaurantId(config.restaurantId)
+      if (config.email) setEmail(config.email)
       if (config.connectionType) setConnectionType(config.connectionType)
       if (config.printerIp) setPrinterIp(config.printerIp)
       if (config.printerPort) setPrinterPort(String(config.printerPort))
@@ -25,8 +27,13 @@ function App() {
     })
 
     // Listen for supabase status updates
-    window.ipcRenderer.on('supabase-status', (_event: any, newStatus: any) => {
+    window.ipcRenderer.on('supabase-status', (_event: any, newStatus: any, message?: string) => {
       setStatus(newStatus)
+      if (newStatus === 'connected' && message) {
+        setSucursal(message)
+      } else if (newStatus === 'error' && message) {
+        alert('Error de conexión: ' + message)
+      }
     })
 
     // Listen for backend logs
@@ -41,7 +48,8 @@ function App() {
   const handleSave = async () => {
     setIsSaving(true)
     await window.ipcRenderer.invoke('save-config', { 
-      restaurantId, 
+      email,
+      password,
       connectionType,
       printerIp, 
       printerPort,
@@ -50,7 +58,6 @@ function App() {
       printAdvanceMinutes
     })
     setIsSaving(false)
-    alert('Configuración guardada. Escuchando nuevas órdenes...')
   }
 
   const handleTestPrinter = async () => {
@@ -86,15 +93,27 @@ function App() {
         <p className="text-neutral-500 text-center mb-8 text-sm">Escucha órdenes en tiempo real y envíalas a tu impresora térmica local.</p>
 
         <div className="space-y-5">
-          <div>
-            <label className="block text-sm font-semibold text-neutral-700 mb-1">ID del Restaurante</label>
-            <input 
-              type="text" 
-              value={restaurantId}
-              onChange={e => setRestaurantId(e.target.value)}
-              className="w-full bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-3 text-neutral-900 focus:ring-2 focus:ring-red-600/50 focus:border-red-600 outline-none transition-all placeholder-neutral-400 font-medium"
-              placeholder="Ej: cm4z..."
-            />
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className="block text-sm font-semibold text-neutral-700 mb-1">Email Administrador</label>
+              <input 
+                type="email" 
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                className="w-full bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-3 text-neutral-900 focus:ring-2 focus:ring-red-600/50 focus:border-red-600 outline-none transition-all placeholder-neutral-400 font-medium"
+                placeholder="admin@restaurante.com"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="block text-sm font-semibold text-neutral-700 mb-1">Contraseña</label>
+              <input 
+                type="password" 
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                className="w-full bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-3 text-neutral-900 focus:ring-2 focus:ring-red-600/50 focus:border-red-600 outline-none transition-all placeholder-neutral-400 font-medium"
+                placeholder="••••••••"
+              />
+            </div>
           </div>
 
           <div>
@@ -191,27 +210,34 @@ function App() {
             </button>
             <button 
               onClick={handleSave}
-              disabled={isSaving || !restaurantId || (connectionType === 'network' && !printerIp)}
+              disabled={isSaving || !email || !password || (connectionType === 'network' && !printerIp)}
               className="w-full bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl font-bold text-lg shadow-lg shadow-red-600/25 transition-all active:scale-[0.98] disabled:opacity-50"
             >
-              {isSaving ? 'Guardando...' : 'Guardar y Conectar'}
+              {isSaving ? 'Conectando...' : 'Guardar y Conectar'}
             </button>
           </div>
         </div>
 
-        <div className="mt-8 pt-6 border-t border-neutral-100 flex items-center justify-between bg-neutral-50/50 -mx-8 -mb-8 px-8 py-5 rounded-b-2xl">
-          <span className="text-sm font-semibold text-neutral-600">Estado de Conexión</span>
-          <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-full border border-neutral-200 shadow-sm">
-            {status === 'connected' && (
-              <><span className="relative flex h-2.5 w-2.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span></span><span className="text-sm font-bold text-emerald-600">En línea</span></>
-            )}
-            {status === 'disconnected' && (
-              <><span className="h-2.5 w-2.5 rounded-full bg-neutral-400"></span><span className="text-sm font-bold text-neutral-600">En espera</span></>
-            )}
-            {status === 'error' && (
-              <><span className="h-2.5 w-2.5 rounded-full bg-red-500"></span><span className="text-sm font-bold text-red-600">Error</span></>
-            )}
+        <div className="mt-8 pt-6 border-t border-neutral-100 flex flex-col items-center justify-between bg-neutral-50/50 -mx-8 -mb-8 px-8 py-5 rounded-b-2xl">
+          <div className="flex w-full justify-between items-center mb-2">
+            <span className="text-sm font-semibold text-neutral-600">Estado de Conexión</span>
+            <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-full border border-neutral-200 shadow-sm">
+              {status === 'connected' && (
+                <><span className="relative flex h-2.5 w-2.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span></span><span className="text-sm font-bold text-emerald-600">En línea</span></>
+              )}
+              {status === 'disconnected' && (
+                <><span className="h-2.5 w-2.5 rounded-full bg-neutral-400"></span><span className="text-sm font-bold text-neutral-600">En espera</span></>
+              )}
+              {status === 'error' && (
+                <><span className="h-2.5 w-2.5 rounded-full bg-red-500"></span><span className="text-sm font-bold text-red-600">Error</span></>
+              )}
+            </div>
           </div>
+          {status === 'connected' && sucursal && (
+            <p className="text-xs text-emerald-700 font-medium w-full text-center bg-emerald-50 py-1.5 rounded-lg border border-emerald-100">
+              Conectado a sucursal: <strong className="font-bold">{sucursal}</strong>
+            </p>
+          )}
         </div>
       </div>
     </div>

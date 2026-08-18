@@ -121,7 +121,8 @@ function createWindow() {
   // Set up IPC Handlers
   ipcMain.handle('get-config', () => {
     return {
-      restaurantId: store.get('restaurantId'),
+      email: store.get('email') || '',
+      restaurantId: store.get('restaurantId') || '',
       connectionType: store.get('connectionType') || 'network',
       printerIp: store.get('printerIp'),
       printerPort: store.get('printerPort'),
@@ -132,7 +133,9 @@ function createWindow() {
   })
 
   ipcMain.handle('save-config', async (_, config) => {
-    store.set('restaurantId', config.restaurantId)
+    if (config.email) store.set('email', config.email)
+    if (config.password) store.set('password', config.password)
+    
     store.set('connectionType', config.connectionType)
     store.set('printerIp', config.printerIp)
     store.set('printerPort', Number(config.printerPort) || 9100)
@@ -140,9 +143,9 @@ function createWindow() {
     store.set('printerPid', config.printerPid)
     store.set('printAdvanceMinutes', Number(config.printAdvanceMinutes) || 0)
 
-    // Restart supabase listener with new ID
-    setupSupabaseRealtime((status) => {
-      win?.webContents.send('supabase-status', status)
+    // Restart supabase listener, which will now login and fetch the new restaurantId
+    setupSupabaseRealtime((status, message) => {
+      win?.webContents.send('supabase-status', status, message)
     })
 
     return true
@@ -155,8 +158,8 @@ function createWindow() {
   // Test active push message to Renderer-process.
   win.webContents.on('did-finish-load', () => {
     // Initial setup
-    setupSupabaseRealtime((status) => {
-      win?.webContents.send('supabase-status', status)
+    setupSupabaseRealtime((status, message) => {
+      win?.webContents.send('supabase-status', status, message)
     })
   })
 
