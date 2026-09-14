@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { createClient } from '@supabase/supabase-js';
 import { store } from './store';
-import { printOrder } from './printer';
+import { printToAllPrinters, printOrderToConsole } from './printer';
 import { parseColombianDate } from './timeUtils';
 
 // Leer variables de entorno (cargadas por Vite en import.meta.env)
@@ -31,7 +31,14 @@ async function processPrint(orderId: string, fullOrder: any) {
       return;
     }
 
-    const success = await printOrder(fullOrder);
+    const isPaused = store.get('isPrintingPaused') || false;
+    if (isPaused) {
+      console.warn(`⏸️ Las impresiones están PAUSADAS. La orden #${orderId.slice(-6)} se retiene en PENDING.`);
+      printOrderToConsole(fullOrder, 'IMPRESIONES PAUSADAS (EN COLA)');
+      return;
+    }
+
+    const success = await printToAllPrinters(fullOrder);
 
     if (success) {
       await supabase
@@ -43,9 +50,12 @@ async function processPrint(orderId: string, fullOrder: any) {
         })
         .eq('id', orderId);
       console.log(`Orden #${orderId.slice(-6)} marcada como PRINTED y PREPARANDO`);
+    } else {
+      console.error(`Ninguna impresora pudo imprimir la orden #${orderId.slice(-6)}. La comanda se mostró en la terminal.`);
     }
   } catch (err) {
     console.error('Fallo al imprimir la orden:', err);
+    printOrderToConsole(fullOrder, 'ERROR CRÍTICO AL IMPRIMIR');
     await supabase
       .from('PedidoRestaurante')
       .update({ printStatus: 'FAILED' })
@@ -77,7 +87,7 @@ async function handleOrder(orderId: string) {
           ProductoMenu ( nombre ),
           EleccionAdicional ( nombreOpcion )
         ),
-        Restaurante ( nombreSucursal )
+        Restaurante ( nombreSucursal, tiempoPaseComandaMinutos )
       `)
       .eq('id', orderId)
       .single();
@@ -99,14 +109,24 @@ async function handleOrder(orderId: string) {
     const now = new Date();
     let delayMs = 0;
 
-    // Si la impresión tiene retardo (aunque para plazoletas usualmente será 0 y no hay pickupSlotStart)
-    if (printAdvanceMinutes > 0 && fullOrder.createdAt) {
-      // Usaremos el createdAt como base si se quisiera retardar, pero lo ideal es imprimir de inmediato
-      // Mantenemos la estructura por compatibilidad
+    // Si es un pedido de reserva y se configuró anticipación de impresión
+    if (fullOrder.esReserva && fullOrder.fechaProgramada && fullOrder.horaProgramadaInicio && printAdvanceMinutes > 0) {
+      try {
+        const fechaProg = String(fullOrder.fechaProgramada).split('T')[0];
+        const horaInicio = String(fullOrder.horaProgramadaInicio).substring(0, 5);
+        const scheduledTime = new Date(`${fechaProg}T${horaInicio}:00-05:00`);
+        const targetPrintTime = new Date(scheduledTime.getTime() - (printAdvanceMinutes * 60 * 1000));
+        const diff = targetPrintTime.getTime() - now.getTime();
+        if (diff > 0) {
+          delayMs = diff;
+        }
+      } catch (err) {
+        console.warn('Error calculando horario programado de reserva:', err);
+      }
     }
 
     if (delayMs > 0) {
-      console.log(`Orden programada para imprimir en ${Math.round(delayMs / 60000)} minutos.`);
+      console.log(`Orden de reserva #${orderId.slice(-6)} programada para imprimir en ${Math.round(delayMs / 60000)} minutos.`);
       scheduledOrders.add(orderId);
       
       setTimeout(async () => {
@@ -228,5 +248,21 @@ export async function setupSupabaseRealtime(onStatusChange: (status: 'connected'
   } catch (err) {
     console.error('Error inesperado durante el setup de Supabase:', err);
     onStatusChange('error', 'Error inesperado de conexión');
+  }
+}
+
+export async function disconnectSupabase() {
+  if (realtimeChannel) {
+    await supabase.removeChannel(realtimeChannel);
+    realtimeChannel = null;
+  }
+  await supabase.auth.signOut();
+}
+
+export async function resumePrintingAndCheckPending() {
+  const restaurantId = store.get('restaurantId');
+  if (restaurantId) {
+    console.log('▶️ Impresiones reanudadas. Verificando pedidos pendientes...');
+    await schedulePendingOrders(restaurantId);
   }
 }

@@ -1,42 +1,94 @@
 import { useState, useEffect } from 'react'
 
+export interface ImpresoraConfig {
+  id: string;
+  nombre: string;
+  tipoConexion: 'network' | 'windows_usb';
+  ip?: string;
+  port?: number;
+  deviceName?: string;
+  rolCopia: 'AMBOS' | 'COCINA' | 'CAJA';
+  activo: boolean;
+}
+
+export interface SystemPrinter {
+  name: string;
+  displayName?: string;
+  description?: string;
+  isDefault?: boolean;
+}
+
 function App() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [sucursal, setSucursal] = useState('')
-  const [connectionType, setConnectionType] = useState<'network' | 'usb'>('network')
-  const [printerIp, setPrinterIp] = useState('192.168.40.18')
-  const [printerPort, setPrinterPort] = useState('9100')
-  const [printerVid, setPrinterVid] = useState('')
-  const [printerPid, setPrinterPid] = useState('')
   const [printAdvanceMinutes, setPrintAdvanceMinutes] = useState('0')
+  const [impresoras, setImpresoras] = useState<ImpresoraConfig[]>([])
+  const [systemPrinters, setSystemPrinters] = useState<SystemPrinter[]>([])
+  
   const [status, setStatus] = useState<'disconnected' | 'connected' | 'error'>('disconnected')
+  const [statusMessage, setStatusMessage] = useState('')
+  const [isPrintingPaused, setIsPrintingPaused] = useState(false)
+  const [isLoggingIn, setIsLoggingIn] = useState(false)
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
-  const [isTesting, setIsTesting] = useState(false)
+  const [isRefreshingPrinters, setIsRefreshingPrinters] = useState(false)
+  const [testingPrinterId, setTestingPrinterId] = useState<string | null>(null)
+  const [testResult, setTestResult] = useState<{ id: string; success: boolean; msg: string } | null>(null)
+  const [saveFeedback, setSaveFeedback] = useState<string | null>(null)
+
+  // Cargar impresoras nativas de Windows
+  const loadSystemPrinters = async () => {
+    setIsRefreshingPrinters(true)
+    try {
+      const printers = await window.ipcRenderer.invoke('get-system-printers')
+      setSystemPrinters(printers || [])
+    } catch (err) {
+      console.error('Error cargando impresoras del sistema:', err)
+    } finally {
+      setIsRefreshingPrinters(false)
+    }
+  }
 
   useEffect(() => {
-    // Load config on mount
+    // 1. Cargar configuración guardada
     window.ipcRenderer.invoke('get-config').then((config: any) => {
       if (config.email) setEmail(config.email)
-      if (config.connectionType) setConnectionType(config.connectionType)
-      if (config.printerIp) setPrinterIp(config.printerIp)
-      if (config.printerPort) setPrinterPort(String(config.printerPort))
-      if (config.printerVid) setPrinterVid(config.printerVid)
-      if (config.printerPid) setPrinterPid(config.printerPid)
       if (config.printAdvanceMinutes !== undefined) setPrintAdvanceMinutes(String(config.printAdvanceMinutes))
-    })
-
-    // Listen for supabase status updates
-    window.ipcRenderer.on('supabase-status', (_event: any, newStatus: any, message?: string) => {
-      setStatus(newStatus)
-      if (newStatus === 'connected' && message) {
-        setSucursal(message)
-      } else if (newStatus === 'error' && message) {
-        alert('Error de conexión: ' + message)
+      if (config.isPrintingPaused !== undefined) setIsPrintingPaused(Boolean(config.isPrintingPaused))
+      
+      if (config.impresoras && Array.isArray(config.impresoras) && config.impresoras.length > 0) {
+        setImpresoras(config.impresoras)
+      } else {
+        // Fallback por defecto si no hay ninguna
+        setImpresoras([
+          {
+            id: 'printer-1',
+            nombre: 'Impresora Principal',
+            tipoConexion: 'network',
+            ip: config.printerIp || '192.168.40.18',
+            port: Number(config.printerPort) || 9100,
+            deviceName: '',
+            rolCopia: 'AMBOS',
+            activo: true
+          }
+        ])
       }
     })
 
-    // Listen for backend logs
+    // 2. Cargar impresoras de Windows
+    loadSystemPrinters()
+
+    // 3. Escuchar estado de Supabase
+    window.ipcRenderer.on('supabase-status', (_event: any, newStatus: any, message?: string) => {
+      setStatus(newStatus)
+      if (message) setStatusMessage(message)
+      if (newStatus === 'connected' && message) {
+        setSucursal(message)
+      }
+    })
+
+    // 4. Logs del backend para depuración en devtools
     window.ipcRenderer.on('main-console-log', (_event: any, ...args: any[]) => {
       console.log('%c[BACKEND]', 'color: #3b82f6; font-weight: bold;', ...args)
     })
@@ -45,201 +97,659 @@ function App() {
     })
   }, [])
 
-  const handleSave = async () => {
-    setIsSaving(true)
-    await window.ipcRenderer.invoke('save-config', { 
-      email,
-      password,
-      connectionType,
-      printerIp, 
-      printerPort,
-      printerVid,
-      printerPid,
-      printAdvanceMinutes
-    })
-    setIsSaving(false)
-  }
-
-  const handleTestPrinter = async () => {
-    setIsTesting(true)
-    const success = await window.ipcRenderer.invoke('test-printer', { 
-      connectionType,
-      ip: printerIp, 
-      port: printerPort,
-      vid: printerVid,
-      pid: printerPid
-    })
-    setIsTesting(false)
-    if (success) {
-      alert('¡Impresión exitosa!')
-    } else {
-      alert(`Error de conexión con la impresora. Verifica la configuración.`)
+  // Iniciar sesión directamente sin necesidad de guardar toda la config
+  const handleDirectLogin = async () => {
+    if (!email || !password) {
+      alert('Por favor ingresa tu correo y contraseña.')
+      return
+    }
+    setIsLoggingIn(true)
+    setSaveFeedback(null)
+    try {
+      const res = await window.ipcRenderer.invoke('login', { email, password })
+      if (res && res.success) {
+        setSucursal(res.sucursal || '')
+        setSaveFeedback('¡Sesión iniciada con éxito!')
+        setTimeout(() => setSaveFeedback(null), 4000)
+      } else {
+        alert('Error de inicio de sesión: ' + (res?.error || 'Credenciales inválidas'))
+      }
+    } catch (err: any) {
+      alert('Error: ' + err.message)
+    } finally {
+      setIsLoggingIn(false)
     }
   }
 
+  // Cerrar sesión
+  const handleLogout = async () => {
+    if (!confirm('¿Deseas cerrar la sesión actual?')) return
+    setIsLoggingOut(true)
+    try {
+      await window.ipcRenderer.invoke('logout')
+      setPassword('')
+      setSucursal('')
+      setStatus('disconnected')
+      setSaveFeedback('Sesión cerrada.')
+      setTimeout(() => setSaveFeedback(null), 3000)
+    } catch (err: any) {
+      console.error('Error al cerrar sesión:', err)
+    } finally {
+      setIsLoggingOut(false)
+    }
+  }
+
+  // Alternar pausa global de impresiones
+  const handleTogglePause = async () => {
+    try {
+      const newState = await window.ipcRenderer.invoke('toggle-pause-printing')
+      setIsPrintingPaused(newState)
+      if (newState) {
+        setSaveFeedback('⏸️ Impresiones en pausa. Los pedidos solo se mostrarán en la terminal.')
+      } else {
+        setSaveFeedback('▶️ Impresiones reanudadas. Procesando pedidos en cola.')
+      }
+      setTimeout(() => setSaveFeedback(null), 4000)
+    } catch (err: any) {
+      console.error('Error alternando pausa:', err)
+    }
+  }
+
+  // Añadir nueva impresora
+  const handleAddPrinter = () => {
+    const defaultDevice = systemPrinters.length > 0 ? systemPrinters[0].name : ''
+    const defaultType: 'windows_usb' | 'network' = systemPrinters.length > 0 ? 'windows_usb' : 'network'
+    
+    const newPrinter: ImpresoraConfig = {
+      id: 'printer_' + Date.now(),
+      nombre: `Impresora ${impresoras.length + 1}`,
+      tipoConexion: defaultType,
+      deviceName: defaultDevice,
+      ip: '192.168.1.100',
+      port: 9100,
+      rolCopia: impresoras.length === 0 ? 'AMBOS' : (impresoras.length === 1 ? 'COCINA' : 'CAJA'),
+      activo: true
+    }
+    setImpresoras(prev => [...prev, newPrinter])
+  }
+
+  // Eliminar impresora
+  const handleRemovePrinter = (id: string) => {
+    if (impresoras.length === 1) {
+      alert('Debes mantener al menos una impresora configurada.')
+      return
+    }
+    setImpresoras(prev => prev.filter(p => p.id !== id))
+  }
+
+  // Modificar campo de impresora
+  const handleUpdatePrinter = (id: string, updates: Partial<ImpresoraConfig>) => {
+    setImpresoras(prev => prev.map(p => {
+      if (p.id !== id) return p
+      const updated = { ...p, ...updates }
+      if (updates.tipoConexion === 'windows_usb' && !updated.deviceName && systemPrinters.length > 0) {
+        updated.deviceName = systemPrinters[0].name
+      }
+      return updated
+    }))
+  }
+
+  // Probar una impresora individual
+  const handleTestIndividual = async (printer: ImpresoraConfig) => {
+    setTestingPrinterId(printer.id)
+    setTestResult(null)
+
+    try {
+      const success = await window.ipcRenderer.invoke('test-printer', printer)
+      if (success) {
+        setTestResult({
+          id: printer.id,
+          success: true,
+          msg: '¡Impresión de prueba exitosa!'
+        })
+      } else {
+        setTestResult({
+          id: printer.id,
+          success: false,
+          msg: printer.tipoConexion === 'windows_usb' 
+            ? 'Error al enviar al spooler de Windows. Revisa que la impresora esté encendida.' 
+            : 'No se pudo conectar a la IP. Verifica la red y el puerto 9100.'
+        })
+      }
+    } catch (err: any) {
+      setTestResult({
+        id: printer.id,
+        success: false,
+        msg: 'Error: ' + (err.message || 'Fallo desconocido')
+      })
+    } finally {
+      setTestingPrinterId(null)
+    }
+  }
+
+  // Guardar configuración general
+  const handleSave = async () => {
+    setIsSaving(true)
+    setSaveFeedback(null)
+
+    try {
+      await window.ipcRenderer.invoke('save-config', {
+        email,
+        password,
+        printAdvanceMinutes: Number(printAdvanceMinutes) || 0,
+        isPrintingPaused,
+        impresoras
+      })
+      setSaveFeedback('Configuración guardada correctamente.')
+      setTimeout(() => setSaveFeedback(null), 4000)
+    } catch (e: any) {
+      setSaveFeedback('Error al guardar: ' + e.message)
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const activeCount = impresoras.filter(p => p.activo).length
+
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-neutral-50 text-neutral-900 p-6 font-sans">
-      <div className="bg-white p-8 rounded-2xl shadow-2xl shadow-red-900/5 w-full max-w-md border border-neutral-100">
-        
-        <div className="flex justify-center mb-6">
-          <div className="w-16 h-16 bg-red-600 rounded-2xl flex items-center justify-center shadow-lg shadow-red-600/30">
-            <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-            </svg>
+    <div className="min-h-screen bg-neutral-900 text-neutral-100 font-sans pb-12 antialiased selection:bg-red-500 selection:text-white">
+      {/* Header Bar */}
+      <header className="sticky top-0 z-30 bg-neutral-900/90 backdrop-blur-md border-b border-neutral-800 px-6 py-4">
+        <div className="max-w-4xl mx-auto flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-gradient-to-br from-red-500 to-red-700 rounded-xl flex items-center justify-center shadow-lg shadow-red-600/30">
+              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+              </svg>
+            </div>
+            <div>
+              <h1 className="text-lg font-black tracking-tight leading-tight flex items-center gap-1.5">
+                UPick <span className="text-red-500 font-extrabold">Printer Plazoletas</span>
+              </h1>
+              <p className="text-xs text-neutral-400">Multi-impresora • Spooler Windows USB • Reservas</p>
+            </div>
+          </div>
+
+          {/* Action & Status Badges */}
+          <div className="flex items-center gap-2.5">
+            {/* BOTÓN PAUSAR / REANUDAR IMPRESIONES */}
+            <button
+              type="button"
+              onClick={handleTogglePause}
+              className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 border shadow-sm ${
+                isPrintingPaused
+                  ? 'bg-amber-500/20 border-amber-500/60 text-amber-300 hover:bg-amber-500/30 animate-pulse'
+                  : 'bg-neutral-800 border-neutral-700 text-neutral-300 hover:bg-neutral-750 hover:text-white'
+              }`}
+              title={isPrintingPaused ? 'Las impresiones están pausadas. Haz clic para reanudar.' : 'Pausar el envío a impresoras físicas'}
+            >
+              {isPrintingPaused ? (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-amber-400" />
+                  <span>⏸️ En Pausa (Reanudar)</span>
+                </>
+              ) : (
+                <>
+                  <span>⏸️</span>
+                  <span>Pausar Impresiones</span>
+                </>
+              )}
+            </button>
+
+            {/* Connection Status Badge */}
+            <div className={`px-3 py-1.5 rounded-full border text-xs font-bold flex items-center gap-2 ${
+              status === 'connected' 
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' 
+                : status === 'error'
+                ? 'bg-red-500/10 border-red-500/30 text-red-400'
+                : 'bg-neutral-800 border-neutral-700 text-neutral-400'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${
+                status === 'connected' ? 'bg-emerald-400 animate-pulse' : status === 'error' ? 'bg-red-400' : 'bg-neutral-500'
+              }`} />
+              {status === 'connected' ? 'En línea' : status === 'error' ? 'Error' : 'En espera'}
+            </div>
+
+            {status === 'connected' && sucursal && (
+              <span className="hidden sm:inline-block px-3 py-1.5 bg-neutral-800 border border-neutral-700 rounded-full text-xs font-medium text-neutral-300">
+                🏢 {sucursal}
+              </span>
+            )}
           </div>
         </div>
+      </header>
 
-        <h1 className="text-2xl font-black text-center mb-2 tracking-tight text-neutral-800">UPick <span className="text-red-600">Printer Plazoletas</span></h1>
-        <p className="text-neutral-500 text-center mb-8 text-sm">Escucha órdenes en tiempo real y envíalas a tu impresora térmica local.</p>
+      {/* Main Container */}
+      <main className="max-w-4xl mx-auto px-6 pt-6 space-y-6">
 
-        <div className="space-y-5">
-          <div className="flex gap-3">
-            <div className="flex-1">
-              <label className="block text-sm font-semibold text-neutral-700 mb-1">Email Administrador</label>
-              <input 
-                type="email" 
+        {/* Global Alerts */}
+        {status === 'error' && (
+          <div className="bg-red-500/15 border border-red-500/30 rounded-2xl p-4 flex items-start gap-3 text-red-300">
+            <svg className="w-5 h-5 text-red-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <div className="text-sm">
+              <p className="font-bold">Error de conexión:</p>
+              <p className="text-red-400/90 text-xs mt-0.5">{statusMessage || 'Verifica el correo y la contraseña ingresados.'}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Banner de Pausa Activa */}
+        {isPrintingPaused && (
+          <div className="bg-amber-500/15 border border-amber-500/40 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-amber-200 animate-in fade-in">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">⏸️</span>
+              <div>
+                <p className="font-bold text-sm text-amber-100">Impresiones Automáticas en Pausa</p>
+                <p className="text-xs text-amber-300/80">Los nuevos pedidos se mostrarán en la terminal y quedarán pendientes hasta que reanudes.</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleTogglePause}
+              className="w-full sm:w-auto px-4 py-2 bg-amber-500 hover:bg-amber-400 text-neutral-950 font-black rounded-xl text-xs shadow-md transition-all active:scale-95 whitespace-nowrap"
+            >
+              ▶️ Reanudar Impresiones
+            </button>
+          </div>
+        )}
+
+        {saveFeedback && (
+          <div className="bg-emerald-500/15 border border-emerald-500/30 rounded-2xl p-3 px-4 text-emerald-300 text-sm flex items-center justify-between animate-in fade-in">
+            <span>{saveFeedback}</span>
+            <button onClick={() => setSaveFeedback(null)} className="text-emerald-400 hover:text-white text-xs font-bold ml-2">✕</button>
+          </div>
+        )}
+
+        {/* Credenciales Card con Botón Directo de Iniciar Sesión */}
+        <section className="bg-neutral-800/60 border border-neutral-750/80 rounded-2xl p-5 shadow-xl">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-neutral-400 flex items-center gap-2">
+              <svg className="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+              Cuenta y Conexión de Supabase
+            </h2>
+            {status === 'connected' && (
+              <span className="text-xs text-emerald-400 font-bold flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                Autenticado
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
+            <div>
+              <label className="block text-xs font-semibold text-neutral-300 mb-1.5">Email Administrador</label>
+              <input
+                type="email"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
-                className="w-full bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-3 text-neutral-900 focus:ring-2 focus:ring-red-600/50 focus:border-red-600 outline-none transition-all placeholder-neutral-400 font-medium"
-                placeholder="admin@restaurante.com"
+                placeholder="admin@sucursal.com"
+                className="w-full bg-neutral-900 border border-neutral-700 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-neutral-500 focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all"
               />
             </div>
-            <div className="flex-1">
-              <label className="block text-sm font-semibold text-neutral-700 mb-1">Contraseña</label>
-              <input 
-                type="password" 
+
+            <div>
+              <label className="block text-xs font-semibold text-neutral-300 mb-1.5">Contraseña</label>
+              <input
+                type="password"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                className="w-full bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-3 text-neutral-900 focus:ring-2 focus:ring-red-600/50 focus:border-red-600 outline-none transition-all placeholder-neutral-400 font-medium"
                 placeholder="••••••••"
+                className="w-full bg-neutral-900 border border-neutral-700 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-neutral-500 focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all"
               />
             </div>
-          </div>
 
-          <div>
-            <label className="block text-sm font-semibold text-neutral-700 mb-1">Minutos antes de imprimir (0 = de inmediato)</label>
-            <input 
-              type="number" 
-              value={printAdvanceMinutes}
-              onChange={e => setPrintAdvanceMinutes(e.target.value)}
-              className="w-full bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-3 text-neutral-900 focus:ring-2 focus:ring-red-600/50 focus:border-red-600 outline-none transition-all placeholder-neutral-400 font-medium"
-              placeholder="Ej: 30"
-              min="0"
-            />
-          </div>
+            <div>
+              <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                Anticipación reservas (Min)
+              </label>
+              <input
+                type="number"
+                min="0"
+                value={printAdvanceMinutes}
+                onChange={e => setPrintAdvanceMinutes(e.target.value)}
+                placeholder="0 = Inmediato"
+                className="w-full bg-neutral-900 border border-neutral-700 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-neutral-500 focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all"
+              />
+            </div>
 
-          <div>
-            <label className="block text-sm font-semibold text-neutral-700 mb-2">Tipo de Conexión</label>
-            <div className="flex bg-neutral-100 p-1 rounded-xl">
-              <button 
-                className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${connectionType === 'network' ? 'bg-white shadow-sm text-red-600' : 'text-neutral-500 hover:text-neutral-700'}`}
-                onClick={() => setConnectionType('network')}
+            <div>
+              {status === 'connected' ? (
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  disabled={isLoggingOut}
+                  className="w-full py-2.5 px-4 bg-neutral-800 hover:bg-neutral-750 border border-neutral-700 text-neutral-300 rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                >
+                  {isLoggingOut ? 'Cerrando...' : 'Cerrar Sesión'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleDirectLogin}
+                  disabled={isLoggingIn || !email || !password}
+                  className="w-full py-2.5 px-4 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold shadow-lg shadow-red-600/30 transition-all active:scale-95 flex items-center justify-center gap-2"
+                >
+                  {isLoggingIn ? (
+                    <>
+                      <svg className="w-3.5 h-3.5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      Conectando...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+                      </svg>
+                      Iniciar Sesión
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* Impresoras Section */}
+        <section className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                </svg>
+                Impresoras Térmicas
+              </h2>
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-neutral-800 text-neutral-300 border border-neutral-700">
+                {activeCount} {activeCount === 1 ? 'activa' : 'activas'}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={loadSystemPrinters}
+                disabled={isRefreshingPrinters}
+                title="Actualizar impresoras detectadas de Windows"
+                className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-neutral-300 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5"
               >
-                Red (IP)
+                <svg className={`w-3.5 h-3.5 ${isRefreshingPrinters ? 'animate-spin text-red-400' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Detectar USB
               </button>
-              <button 
-                className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${connectionType === 'usb' ? 'bg-white shadow-sm text-red-600' : 'text-neutral-500 hover:text-neutral-700'}`}
-                onClick={() => setConnectionType('usb')}
+
+              <button
+                type="button"
+                onClick={handleAddPrinter}
+                className="px-3.5 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-xl text-xs font-bold shadow-md shadow-red-600/30 transition-all flex items-center gap-1.5 active:scale-95"
               >
-                Cable (USB)
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+                </svg>
+                Añadir Impresora
               </button>
             </div>
           </div>
 
-          {connectionType === 'network' ? (
-            <div className="flex gap-3 animate-in fade-in zoom-in-95 duration-200">
-              <div className="flex-1">
-                <label className="block text-sm font-semibold text-neutral-700 mb-1">IP Local</label>
-                <input 
-                  type="text" 
-                  value={printerIp}
-                  onChange={e => setPrinterIp(e.target.value)}
-                  className="w-full bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-3 text-neutral-900 focus:ring-2 focus:ring-red-600/50 focus:border-red-600 outline-none transition-all placeholder-neutral-400 font-medium"
-                  placeholder="192.168.x.x"
-                />
-              </div>
-              
-              <div className="w-24">
-                <label className="block text-sm font-semibold text-neutral-700 mb-1">Puerto</label>
-                <input 
-                  type="text" 
-                  value={printerPort}
-                  onChange={e => setPrinterPort(e.target.value)}
-                  className="w-full bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-3 text-neutral-900 focus:ring-2 focus:ring-red-600/50 focus:border-red-600 outline-none transition-all placeholder-neutral-400 font-medium text-center"
-                  placeholder="9100"
-                />
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-4 animate-in fade-in zoom-in-95 duration-200 bg-blue-50/50 border border-blue-100 p-4 rounded-xl">
-              <p className="text-sm text-blue-800">
-                La aplicación intentará autodetectar la primera impresora USB conectada. Opcionalmente, puedes especificar su VID y PID.
-              </p>
-              <div className="flex gap-3">
-                <div className="flex-1">
-                  <label className="block text-xs font-semibold text-blue-900 mb-1">Vendor ID (Opcional)</label>
-                  <input 
-                    type="text" 
-                    value={printerVid}
-                    onChange={e => setPrinterVid(e.target.value)}
-                    className="w-full bg-white border border-blue-200 rounded-lg px-3 py-2 text-sm text-neutral-900 focus:ring-2 focus:ring-blue-500/50 outline-none"
-                    placeholder="Ej: 0x04b8"
-                  />
-                </div>
-                <div className="flex-1">
-                  <label className="block text-xs font-semibold text-blue-900 mb-1">Product ID (Opcional)</label>
-                  <input 
-                    type="text" 
-                    value={printerPid}
-                    onChange={e => setPrinterPid(e.target.value)}
-                    className="w-full bg-white border border-blue-200 rounded-lg px-3 py-2 text-sm text-neutral-900 focus:ring-2 focus:ring-blue-500/50 outline-none"
-                    placeholder="Ej: 0x0e28"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
+          {/* List of Printer Cards */}
+          <div className="grid grid-cols-1 gap-4">
+            {impresoras.map((printer, index) => {
+              const isTestingThis = testingPrinterId === printer.id
+              const currentResult = testResult && testResult.id === printer.id ? testResult : null
 
-          <div className="pt-2">
-            <button 
-              onClick={handleTestPrinter}
-              disabled={isTesting || (connectionType === 'network' && (!printerIp || !printerPort))}
-              className="w-full bg-white border-2 border-red-100 hover:border-red-200 text-red-600 py-3 rounded-xl font-bold text-[15px] transition-all active:scale-[0.98] disabled:opacity-50 mb-3"
-            >
-              {isTesting ? 'Probando...' : 'Probar Impresión'}
-            </button>
-            <button 
-              onClick={handleSave}
-              disabled={isSaving || !email || !password || (connectionType === 'network' && !printerIp)}
-              className="w-full bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl font-bold text-lg shadow-lg shadow-red-600/25 transition-all active:scale-[0.98] disabled:opacity-50"
-            >
-              {isSaving ? 'Conectando...' : 'Guardar y Conectar'}
-            </button>
+              return (
+                <div
+                  key={printer.id}
+                  className={`border rounded-2xl p-5 transition-all bg-neutral-850/80 ${
+                    printer.activo 
+                      ? 'border-neutral-700 hover:border-neutral-600 shadow-lg' 
+                      : 'border-neutral-800 opacity-60 bg-neutral-900/50'
+                  }`}
+                >
+                  {/* Card Header */}
+                  <div className="flex items-center justify-between gap-3 mb-4 pb-3 border-b border-neutral-800">
+                    <div className="flex items-center gap-3 flex-1">
+                      <span className="w-6 h-6 rounded-lg bg-neutral-800 flex items-center justify-center text-xs font-bold text-neutral-400">
+                        #{index + 1}
+                      </span>
+                      <input
+                        type="text"
+                        value={printer.nombre}
+                        onChange={e => handleUpdatePrinter(printer.id, { nombre: e.target.value })}
+                        placeholder="Ej: Cocina Caliente, Caja Mostrador"
+                        className="bg-transparent font-bold text-white text-base focus:bg-neutral-900 px-2 py-1 rounded-lg border border-transparent focus:border-neutral-700 outline-none transition-all flex-1 max-w-xs"
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      {/* Active toggle */}
+                      <label className="flex items-center gap-2 cursor-pointer select-none">
+                        <span className="text-xs font-semibold text-neutral-400">
+                          {printer.activo ? 'Habilitada' : 'Pausada'}
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={printer.activo}
+                          onChange={e => handleUpdatePrinter(printer.id, { activo: e.target.checked })}
+                          className="sr-only peer"
+                        />
+                        <div className="w-9 h-5 bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500 relative" />
+                      </label>
+
+                      {/* Delete button */}
+                      <button
+                        type="button"
+                        onClick={() => handleRemovePrinter(printer.id)}
+                        title="Eliminar impresora"
+                        className="p-1.5 text-neutral-500 hover:text-red-400 rounded-lg hover:bg-neutral-800 transition-all"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Card Body: Connection Type & Parameters */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    {/* Connection Type Tabs */}
+                    <div>
+                      <label className="block text-xs font-semibold text-neutral-400 mb-1.5">
+                        Tipo de Conexión
+                      </label>
+                      <div className="grid grid-cols-2 bg-neutral-900 p-1 rounded-xl border border-neutral-750">
+                        <button
+                          type="button"
+                          onClick={() => handleUpdatePrinter(printer.id, { tipoConexion: 'windows_usb' })}
+                          className={`py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                            printer.tipoConexion === 'windows_usb'
+                              ? 'bg-neutral-800 text-white shadow-md border border-neutral-700'
+                              : 'text-neutral-400 hover:text-neutral-200'
+                          }`}
+                        >
+                          <svg className="w-3.5 h-3.5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                          </svg>
+                          Cable / Windows
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleUpdatePrinter(printer.id, { tipoConexion: 'network' })}
+                          className={`py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                            printer.tipoConexion === 'network'
+                              ? 'bg-neutral-800 text-white shadow-md border border-neutral-700'
+                              : 'text-neutral-400 hover:text-neutral-200'
+                          }`}
+                        >
+                          <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+                          </svg>
+                          Red (TCP / IP)
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Role selector */}
+                    <div>
+                      <label className="block text-xs font-semibold text-neutral-400 mb-1.5">
+                        Rol de la Comanda
+                      </label>
+                      <div className="grid grid-cols-3 bg-neutral-900 p-1 rounded-xl border border-neutral-750">
+                        {(['AMBOS', 'COCINA', 'CAJA'] as const).map(rol => (
+                          <button
+                            key={rol}
+                            type="button"
+                            onClick={() => handleUpdatePrinter(printer.id, { rolCopia: rol })}
+                            className={`py-2 text-xs font-bold rounded-lg transition-all ${
+                              printer.rolCopia === rol
+                                ? 'bg-red-600 text-white shadow-md'
+                                : 'text-neutral-400 hover:text-neutral-200'
+                            }`}
+                          >
+                            {rol === 'AMBOS' ? 'Ambos' : rol === 'COCINA' ? 'Cocina' : 'Caja'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Connection Specific Inputs */}
+                  {printer.tipoConexion === 'windows_usb' ? (
+                    <div className="bg-neutral-900/80 border border-neutral-800 rounded-xl p-3 mb-4">
+                      <label className="block text-xs font-semibold text-neutral-300 mb-1.5 flex items-center justify-between">
+                        <span>Impresora instalada en Windows</span>
+                        {systemPrinters.length === 0 && (
+                          <span className="text-amber-400 text-xs font-normal">
+                            No se detectaron impresoras de Windows
+                          </span>
+                        )}
+                      </label>
+
+                      <div className="flex gap-2">
+                        <select
+                          value={printer.deviceName || ''}
+                          onChange={e => handleUpdatePrinter(printer.id, { deviceName: e.target.value })}
+                          className="w-full bg-neutral-950 border border-neutral-700 rounded-xl px-3.5 py-2.5 text-sm text-white focus:ring-2 focus:ring-red-500 outline-none"
+                        >
+                          <option value="">-- Selecciona tu impresora térmica --</option>
+                          {systemPrinters.map(sp => (
+                            <option key={sp.name} value={sp.name}>
+                              {sp.name} {sp.isDefault ? '(Predeterminada)' : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <p className="text-[11px] text-neutral-400 mt-2 flex items-center gap-1.5">
+                        <span className="text-emerald-400">✓</span>
+                        Compatible con cualquier impresora térmica USB por cable usando el driver nativo de Windows (sin Zadig).
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="bg-neutral-900/80 border border-neutral-800 rounded-xl p-3 mb-4 grid grid-cols-3 gap-3">
+                      <div className="col-span-2">
+                        <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                          Dirección IP Local
+                        </label>
+                        <input
+                          type="text"
+                          value={printer.ip || ''}
+                          onChange={e => handleUpdatePrinter(printer.id, { ip: e.target.value })}
+                          placeholder="192.168.1.100"
+                          className="w-full bg-neutral-950 border border-neutral-700 rounded-xl px-3 py-2 text-sm text-white focus:ring-2 focus:ring-red-500 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                          Puerto
+                        </label>
+                        <input
+                          type="number"
+                          value={printer.port || 9100}
+                          onChange={e => handleUpdatePrinter(printer.id, { port: Number(e.target.value) || 9100 })}
+                          placeholder="9100"
+                          className="w-full bg-neutral-950 border border-neutral-700 rounded-xl px-3 py-2 text-sm text-white text-center focus:ring-2 focus:ring-red-500 outline-none"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Card Action & Feedback Footer */}
+                  <div className="flex items-center justify-between pt-2">
+                    <div>
+                      {currentResult && (
+                        <div className={`text-xs font-medium px-2.5 py-1 rounded-lg flex items-center gap-1.5 ${
+                          currentResult.success 
+                            ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30' 
+                            : 'bg-red-500/15 text-red-300 border border-red-500/30'
+                        }`}>
+                          <span>{currentResult.success ? '✓' : '⚠️'}</span>
+                          {currentResult.msg}
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleTestIndividual(printer)}
+                      disabled={isTestingThis}
+                      className="px-4 py-2 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-neutral-700 rounded-xl text-xs font-bold transition-all active:scale-95 disabled:opacity-50 flex items-center gap-1.5"
+                    >
+                      {isTestingThis ? (
+                        <>
+                          <svg className="w-3.5 h-3.5 animate-spin text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                          </svg>
+                          Imprimiendo prueba...
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-3.5 h-3.5 text-neutral-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                          </svg>
+                          Probar Impresora
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
           </div>
+        </section>
+
+        {/* Bottom Sticky Save Bar */}
+        <div className="pt-4 border-t border-neutral-800 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <p className="text-xs text-neutral-400 text-center sm:text-left">
+            Al guardar, los cambios de impresoras y configuración se sincronizan inmediatamente.
+          </p>
+
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={isSaving}
+            className="w-full sm:w-auto px-8 py-3.5 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white rounded-xl font-extrabold text-sm shadow-xl shadow-red-600/30 transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {isSaving ? (
+              <>
+                <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Guardando...
+              </>
+            ) : (
+              'Guardar Configuración'
+            )}
+          </button>
         </div>
 
-        <div className="mt-8 pt-6 border-t border-neutral-100 flex flex-col items-center justify-between bg-neutral-50/50 -mx-8 -mb-8 px-8 py-5 rounded-b-2xl">
-          <div className="flex w-full justify-between items-center mb-2">
-            <span className="text-sm font-semibold text-neutral-600">Estado de Conexión</span>
-            <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-full border border-neutral-200 shadow-sm">
-              {status === 'connected' && (
-                <><span className="relative flex h-2.5 w-2.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span></span><span className="text-sm font-bold text-emerald-600">En línea</span></>
-              )}
-              {status === 'disconnected' && (
-                <><span className="h-2.5 w-2.5 rounded-full bg-neutral-400"></span><span className="text-sm font-bold text-neutral-600">En espera</span></>
-              )}
-              {status === 'error' && (
-                <><span className="h-2.5 w-2.5 rounded-full bg-red-500"></span><span className="text-sm font-bold text-red-600">Error</span></>
-              )}
-            </div>
-          </div>
-          {status === 'connected' && sucursal && (
-            <p className="text-xs text-emerald-700 font-medium w-full text-center bg-emerald-50 py-1.5 rounded-lg border border-emerald-100">
-              Conectado a sucursal: <strong className="font-bold">{sucursal}</strong>
-            </p>
-          )}
-        </div>
-      </div>
+      </main>
     </div>
   )
 }
