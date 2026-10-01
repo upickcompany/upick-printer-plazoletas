@@ -53,7 +53,7 @@ console.error = (...args) => {
   }
 };
 
-import { setupSupabaseRealtime } from './supabase'
+import { setupSupabaseRealtime, disconnectSupabase, resumePrintingAndCheckPending } from './supabase'
 import { testPrinter } from './printer'
 import { store } from './store'
 
@@ -63,8 +63,10 @@ function createWindow() {
   const startHidden = app.isPackaged && process.argv.includes('--hidden')
 
   win = new BrowserWindow({
-    width: 600,
-    height: 700,
+    width: 760,
+    height: 820,
+    minWidth: 600,
+    minHeight: 700,
     icon: iconPath,
     show: !startHidden,
     webPreferences: {
@@ -119,29 +121,72 @@ function createWindow() {
   })
 
   // Set up IPC Handlers
+  ipcMain.handle('get-system-printers', async (event) => {
+    try {
+      const targetWin = BrowserWindow.fromWebContents(event.sender) || win
+      if (!targetWin) return []
+      return await targetWin.webContents.getPrintersAsync()
+    } catch (err) {
+      console.error('Error al obtener impresoras de Windows:', err)
+      return []
+    }
+  })
+
   ipcMain.handle('get-config', () => {
     return {
       email: store.get('email') || '',
       restaurantId: store.get('restaurantId') || '',
+      printAdvanceMinutes: store.get('printAdvanceMinutes') || 0,
+      isPrintingPaused: store.get('isPrintingPaused') || false,
+      impresoras: store.get('impresoras') || [],
+      // Compatibilidad legacy
       connectionType: store.get('connectionType') || 'network',
-      printerIp: store.get('printerIp'),
-      printerPort: store.get('printerPort'),
-      printerVid: store.get('printerVid'),
-      printerPid: store.get('printerPid'),
-      printAdvanceMinutes: store.get('printAdvanceMinutes') || 0
+      printerIp: store.get('printerIp') || '',
+      printerPort: store.get('printerPort') || 9100
     }
   })
 
+  ipcMain.handle('login', async (_, { email, password }) => {
+    store.set('email', email)
+    store.set('password', password)
+    return new Promise((resolve) => {
+      setupSupabaseRealtime((status, message) => {
+        win?.webContents.send('supabase-status', status, message)
+        if (status === 'connected') resolve({ success: true, sucursal: message })
+        else if (status === 'error') resolve({ success: false, error: message })
+      })
+    })
+  })
+
+  ipcMain.handle('logout', async () => {
+    store.set('password', '')
+    await disconnectSupabase()
+    win?.webContents.send('supabase-status', 'disconnected')
+    return true
+  })
+
+  ipcMain.handle('toggle-pause-printing', async (_, paused?: boolean) => {
+    const current = store.get('isPrintingPaused') || false
+    const newState = paused !== undefined ? paused : !current
+    store.set('isPrintingPaused', newState)
+    if (!newState) {
+      resumePrintingAndCheckPending()
+    }
+    return newState
+  })
+
   ipcMain.handle('save-config', async (_, config) => {
-    if (config.email) store.set('email', config.email)
+    if (config.email !== undefined) store.set('email', config.email)
     if (config.password) store.set('password', config.password)
-    
-    store.set('connectionType', config.connectionType)
-    store.set('printerIp', config.printerIp)
-    store.set('printerPort', Number(config.printerPort) || 9100)
-    store.set('printerVid', config.printerVid)
-    store.set('printerPid', config.printerPid)
-    store.set('printAdvanceMinutes', Number(config.printAdvanceMinutes) || 0)
+    if (config.printAdvanceMinutes !== undefined) {
+      store.set('printAdvanceMinutes', Number(config.printAdvanceMinutes) || 0)
+    }
+    if (config.impresoras && Array.isArray(config.impresoras)) {
+      store.set('impresoras', config.impresoras)
+    }
+    if (config.isPrintingPaused !== undefined) {
+      store.set('isPrintingPaused', Boolean(config.isPrintingPaused))
+    }
 
     // Restart supabase listener, which will now login and fetch the new restaurantId
     setupSupabaseRealtime((status, message) => {
@@ -151,8 +196,8 @@ function createWindow() {
     return true
   })
 
-  ipcMain.handle('test-printer', async (_, config) => {
-    return await testPrinter(config)
+  ipcMain.handle('test-printer', async (_, printerConfig) => {
+    return await testPrinter(printerConfig)
   })
 
   // Test active push message to Renderer-process.
