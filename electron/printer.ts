@@ -422,12 +422,22 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
       const printer = new escpos.Printer(device, options);
 
       let isDone = false;
+      const timeoutTimer = setTimeout(() => {
+        if (!isDone) {
+          isDone = true;
+          console.error(`Timeout (6s) conectando a impresora de red (${ip}:${port})`);
+          try { device.close(); } catch (_) {}
+          resolve(false);
+        }
+      }, 6000);
+
       device.open((error: any) => {
         if (error) {
+          clearTimeout(timeoutTimer);
           if (isDone) {
-            console.warn('Conexión cerrada (ignorado por finalización):', error.message);
             return;
           }
+          isDone = true;
           console.error(`Error conectando a impresora de red (${ip}:${port}):`, error);
           resolve(false);
           return;
@@ -564,12 +574,14 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
               .cut();
 
             isDone = true;
+            clearTimeout(timeoutTimer);
             printer.close((closeErr: any) => {
               if (closeErr) console.error('Error al cerrar la impresora:', closeErr);
               resolve(true);
             });
           });
         } catch (printError) {
+          clearTimeout(timeoutTimer);
           console.error('Error en comandos de impresión ESC/POS:', printError);
           device.close();
           resolve(false);
@@ -583,19 +595,58 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
 }
 
 // -------------------------------------------------------------
+// COLA SECUENCIAL POR IMPRESORA (MUTEX ANTI-BLOQUEO)
+// -------------------------------------------------------------
+// Las impresoras térmicas solo admiten 1 conexión socket/driver a la vez.
+// Esta cola asegura que las órdenes a un mismo dispositivo se procesen
+// una después de otra, dejando tiempo para corte de papel y liberación de socket.
+const printerQueues = new Map<string, Promise<any>>();
+
+async function enqueuePrintJob<T>(printerKey: string, job: () => Promise<T>): Promise<T> {
+  const previousJob = printerQueues.get(printerKey) || Promise.resolve();
+
+  let finishCurrentJob: () => void;
+  const currentJobPromise = new Promise<void>((resolve) => {
+    finishCurrentJob = resolve;
+  });
+
+  printerQueues.set(printerKey, previousJob.catch(() => {}).then(() => currentJobPromise));
+
+  await previousJob.catch(() => {});
+
+  try {
+    const result = await job();
+    // Pausa técnica (400ms) para que el firmware de la impresora complete el corte y libere buffers
+    await new Promise((r) => setTimeout(r, 400));
+    return result;
+  } finally {
+    finishCurrentJob!();
+    if (printerQueues.get(printerKey) === currentJobPromise) {
+      printerQueues.delete(printerKey);
+    }
+  }
+}
+
+// -------------------------------------------------------------
 // IMPRIMIR PEDIDO EN UNA IMPRESORA INDIVIDUAL
 // -------------------------------------------------------------
 async function printSingleOrder(orderData: any, printerConfig: ImpresoraConfig): Promise<boolean> {
-  if (printerConfig.tipoConexion === 'windows_usb') {
-    if (!printerConfig.deviceName) {
-      console.error(`[${printerConfig.nombre}] No tiene dispositivo de Windows seleccionado.`);
-      return false;
+  const printerKey = printerConfig.tipoConexion === 'windows_usb'
+    ? `usb:${printerConfig.deviceName || 'default'}`
+    : `net:${printerConfig.ip}:${printerConfig.port || 9100}`;
+
+  return await enqueuePrintJob(printerKey, async () => {
+    if (printerConfig.tipoConexion === 'windows_usb') {
+      if (!printerConfig.deviceName) {
+        console.error(`[${printerConfig.nombre}] No tiene dispositivo de Windows seleccionado.`);
+        return false;
+      }
+      const html = generateReceiptHtml(orderData, printerConfig);
+      return await printViaWindowsSpooler(printerConfig.deviceName, html);
+    } else {
+      return await printViaNetworkEscpos(orderData, printerConfig);
     }
-    const html = generateReceiptHtml(orderData, printerConfig);
-    return await printViaWindowsSpooler(printerConfig.deviceName, html);
-  } else {
-    return await printViaNetworkEscpos(orderData, printerConfig);
-  }
+  });
 }
 
 // -------------------------------------------------------------
@@ -609,43 +660,71 @@ export function printOrderToConsole(orderData: any, motivo?: string) {
 
   if (orderData.TransaccionPago) {
     const tx = orderData.TransaccionPago;
-    transaccionInfo = tx.nombreCliente || 'Cliente';
+    transaccionInfo = removeAccents(tx.nombreCliente || 'Cliente');
     telefonoCliente = tx.telefonoCliente ? `Tel: ${tx.telefonoCliente}` : '';
     codigoTicket = tx.id ? tx.id.slice(-6).toUpperCase() : 'N/A';
 
     if (tx.tipoPedido === 'ENTREGA_MESA') {
-      tipoPedidoTexto = `ENTREGAR EN: ${tx.ubicacionEntregaTexto || 'Ubicación no especificada'}`;
+      tipoPedidoTexto = removeAccents(`ENTREGAR EN: ${tx.ubicacionEntregaTexto || 'Ubicacion no especificada'}`);
     } else if (tx.tipoPedido === 'RECOGIDA') {
       tipoPedidoTexto = 'PARA RECOGER';
     }
   }
 
   const { esReserva, fechaProgramadaTexto, horaProgramadaTexto } = getReservaInfo(orderData);
-  const nombreRest = orderData.Restaurante?.nombreSucursal || 'Restaurante';
+  const nombreRest = removeAccents(orderData.Restaurante?.nombreSucursal || 'Restaurante');
   const fechaStr = orderData.createdAt ? formatBogotaDate(orderData.createdAt) : new Date().toLocaleString('es-CO');
 
-  console.log('\n╔════════════════════════════════════════════════════════════╗');
+  const width = 58;
+  const border = '+' + '-'.repeat(width) + '+';
+  const separator = '|' + '='.repeat(width) + '|';
+  const subSep = '|' + '-'.repeat(width) + '|';
+
+  const formatLine = (text: string) => {
+    const cleanText = removeAccents(text);
+    const content = ' ' + cleanText;
+    if (content.length > width) {
+      return '|' + content.slice(0, width) + '|';
+    }
+    return '|' + content.padEnd(width) + '|';
+  };
+
+  const centerLine = (text: string) => {
+    const cleanText = removeAccents(text);
+    const totalPad = width - cleanText.length;
+    if (totalPad <= 0) return '|' + cleanText.slice(0, width) + '|';
+    const leftPad = Math.floor(totalPad / 2);
+    const rightPad = totalPad - leftPad;
+    return '|' + ' '.repeat(leftPad) + cleanText + ' '.repeat(rightPad) + '|';
+  };
+
+  const lines: string[] = [];
+  lines.push('');
+  lines.push(border);
   if (motivo) {
-    console.log(`║ ⚠️  [TERMINAL DEBUG] ${motivo}`);
-    console.log('╠════════════════════════════════════════════════════════════╣');
+    lines.push(centerLine(`[AVISO] ${motivo}`));
+    lines.push(separator);
   } else {
-    console.log('║             🧾 DETALLE DE COMANDA (TERMINAL)               ║');
-    console.log('╠════════════════════════════════════════════════════════════╣');
+    lines.push(centerLine('DETALLE DE COMANDA (TERMINAL)'));
+    lines.push(separator);
   }
-  console.log(`║ UPick - ${nombreRest}`);
-  console.log(`║ Pedido #${codigoTicket} | PAGADO | ${fechaStr}`);
+  lines.push(formatLine(`UPick - ${nombreRest}`));
+  lines.push(formatLine(`Pedido #${codigoTicket} | PAGADO | ${fechaStr}`));
+
   if (esReserva) {
-    console.log('║ ────────────────────────────────────────────────────────── ║');
-    console.log(`║ 📅 *** COMANDA DE RESERVA ***`);
-    console.log(`║    PROGRAMADO: ${fechaProgramadaTexto} | HORA: ${horaProgramadaTexto}`);
-    console.log('║ ────────────────────────────────────────────────────────── ║');
+    lines.push(subSep);
+    lines.push(centerLine('*** COMANDA DE RESERVA ***'));
+    lines.push(formatLine(`PROGRAMADO: ${fechaProgramadaTexto} | HORA: ${horaProgramadaTexto}`));
+    lines.push(subSep);
   }
-  console.log(`║ Cliente: ${transaccionInfo} ${telefonoCliente}`);
+
+  lines.push(formatLine(`Cliente: ${transaccionInfo} ${telefonoCliente}`.trim()));
   if (tipoPedidoTexto) {
-    console.log(`║ Tipo: ${tipoPedidoTexto}`);
+    lines.push(formatLine(`Tipo: ${tipoPedidoTexto}`));
   }
-  console.log('╠════════════════════════════════════════════════════════════╣');
-  console.log('║ ÍTEMS DEL PEDIDO:');
+
+  lines.push(separator);
+  lines.push(formatLine('ITEMS DEL PEDIDO:'));
 
   let totalItems = 0;
   if (orderData.DetallePedido && orderData.DetallePedido.length > 0) {
@@ -653,24 +732,27 @@ export function printOrderToConsole(orderData: any, motivo?: string) {
       const cant = item.cantidad || 1;
       totalItems += cant;
       const desc = item.ProductoMenu?.nombre || 'Producto';
-      console.log(`║   • ${cant}x ${desc}`);
+      lines.push(formatLine(`  * ${cant}x ${desc}`));
       if (item.notas) {
-        console.log(`║      Nota: ${item.notas}`);
+        lines.push(formatLine(`     Nota: ${item.notas}`));
       }
       if (item.EleccionAdicional && item.EleccionAdicional.length > 0) {
         item.EleccionAdicional.forEach((el: any) => {
-          console.log(`║      + ${el.nombreOpcion}`);
+          lines.push(formatLine(`     + ${el.nombreOpcion}`));
         });
       }
     });
   } else {
-    console.log('║   (Sin artículos registrados)');
+    lines.push(formatLine('  (Sin articulos registrados)'));
   }
 
-  console.log('╠════════════════════════════════════════════════════════════╣');
-  console.log(`║ Total artículos: ${totalItems}`);
-  console.log(`║ QR URL: https://plazoletas.upickcol.com/qrc/pedido/${orderData.id}`);
-  console.log('╚════════════════════════════════════════════════════════════╝\n');
+  lines.push(separator);
+  lines.push(formatLine(`Total articulos: ${totalItems}`));
+  lines.push(formatLine(`QR URL: https://plazoletas.upickcol.com/qrc/pedido/${orderData.id}`));
+  lines.push(border);
+  lines.push('');
+
+  console.log(lines.join('\n'));
 }
 
 // -------------------------------------------------------------
@@ -734,15 +816,19 @@ export const printOrder = (orderData: any) => printToAllPrinters(orderData);
 // -------------------------------------------------------------
 export async function testPrinter(config: any): Promise<boolean> {
   const tipo = config.tipoConexion || config.connectionType;
+  const printerKey = tipo === 'windows_usb'
+    ? `usb:${config.deviceName || 'test'}`
+    : `net:${config.ip || config.printerIp}:${config.port || config.printerPort || 9100}`;
 
-  if (tipo === 'windows_usb') {
-    const deviceName = config.deviceName;
-    if (!deviceName) {
-      console.error('No se seleccionó una impresora de Windows para la prueba.');
-      return false;
-    }
+  return await enqueuePrintJob(printerKey, async () => {
+    if (tipo === 'windows_usb') {
+      const deviceName = config.deviceName;
+      if (!deviceName) {
+        console.error('No se seleccionó una impresora de Windows para la prueba.');
+        return false;
+      }
 
-    const testHtml = `<!DOCTYPE html>
+      const testHtml = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -770,67 +856,84 @@ export async function testPrinter(config: any): Promise<boolean> {
 </body>
 </html>`;
 
-    return await printViaWindowsSpooler(deviceName, testHtml);
-  } else {
-    // Red TCP ESC/POS
-    const ip = config.ip || config.printerIp;
-    const port = Number(config.port || config.printerPort) || 9100;
+      return await printViaWindowsSpooler(deviceName, testHtml);
+    } else {
+      // Red TCP ESC/POS
+      const ip = config.ip || config.printerIp;
+      const port = Number(config.port || config.printerPort) || 9100;
 
-    if (!ip) {
-      console.error('No hay IP configurada para la prueba de red.');
-      return false;
-    }
-
-    return new Promise((resolve) => {
-      try {
-        const device = new escpos.Network(ip, port);
-        device.close = function (cb: any) {
-          if (this.device) {
-            this.device.end();
-            setTimeout(() => {
-              if (this.device) {
-                this.device.destroy();
-                this.device = null;
-              }
-              if (cb) cb(null, this.device);
-            }, 500);
-          } else {
-            if (cb) cb(null, this.device);
-          }
-          return this;
-        };
-
-        const printer = new escpos.Printer(device);
-
-        device.open((error: any) => {
-          if (error) {
-            console.error(`Error conectando para prueba de red (${ip}:${port}):`, error);
-            resolve(false);
-            return;
-          }
-
-          try {
-            printer
-              .align('ct')
-              .style('b')
-              .text('Prueba de Conexión Exitosa')
-              .style('normal')
-              .text('UPick Printer Plazoletas')
-              .text(`Impresora: ${config.nombre || 'Red'}`)
-              .text(`IP: ${ip}:${port}`)
-              .text(`Rol: ${config.rolCopia || 'AMBOS'}`)
-              .feed(3)
-              .cut()
-              .close(() => {
-                resolve(true);
-              });
-          } catch (e) {
-            resolve(false);
-          }
-        });
-      } catch (err) {
-        resolve(false);
+      if (!ip) {
+        console.error('No hay IP configurada para la prueba de red.');
+        return false;
       }
-    });
-  }
+
+      return new Promise<boolean>((resolve) => {
+        try {
+          const device = new escpos.Network(ip, port);
+          device.close = function (cb: any) {
+            if (this.device) {
+              this.device.end();
+              setTimeout(() => {
+                if (this.device) {
+                  this.device.destroy();
+                  this.device = null;
+                }
+                if (cb) cb(null, this.device);
+              }, 500);
+            } else {
+              if (cb) cb(null, this.device);
+            }
+            return this;
+          };
+
+          const printer = new escpos.Printer(device);
+
+          let isDone = false;
+          const timeoutTimer = setTimeout(() => {
+            if (!isDone) {
+              isDone = true;
+              console.error(`Timeout (5s) en prueba de impresora de red (${ip}:${port})`);
+              try { device.close(); } catch (_) {}
+              resolve(false);
+            }
+          }, 5000);
+
+          device.open((error: any) => {
+            if (error) {
+              clearTimeout(timeoutTimer);
+              if (isDone) return;
+              isDone = true;
+              console.error(`Error conectando para prueba de red (${ip}:${port}):`, error);
+              resolve(false);
+              return;
+            }
+
+            try {
+              printer
+                .align('ct')
+                .style('b')
+                .text('Prueba de Conexión Exitosa')
+                .style('normal')
+                .text('UPick Printer Plazoletas')
+                .text(`Impresora: ${config.nombre || 'Red'}`)
+                .text(`IP: ${ip}:${port}`)
+                .text(`Rol: ${config.rolCopia || 'AMBOS'}`)
+                .feed(3)
+                .cut()
+                .close(() => {
+                  clearTimeout(timeoutTimer);
+                  isDone = true;
+                  resolve(true);
+                });
+            } catch (e) {
+              clearTimeout(timeoutTimer);
+              resolve(false);
+            }
+          });
+        } catch (err) {
+          resolve(false);
+        }
+      });
+    }
+  });
 }

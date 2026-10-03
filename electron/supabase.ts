@@ -16,6 +16,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 let realtimeChannel: ReturnType<typeof supabase.channel> | null = null;
 const scheduledOrders = new Set<string>();
+const processingOrders = new Set<string>();
 
 async function processPrint(orderId: string, fullOrder: any) {
   try {
@@ -64,9 +65,10 @@ async function processPrint(orderId: string, fullOrder: any) {
 }
 
 async function handleOrder(orderId: string) {
-  if (scheduledOrders.has(orderId)) {
+  if (scheduledOrders.has(orderId) || processingOrders.has(orderId)) {
     return;
   }
+  processingOrders.add(orderId);
 
   try {
     const { data: fullOrder, error } = await supabase
@@ -138,6 +140,8 @@ async function handleOrder(orderId: string) {
     }
   } catch (err) {
     console.error('Error handling order:', err);
+  } finally {
+    processingOrders.delete(orderId);
   }
 }
 
@@ -189,8 +193,14 @@ export async function setupSupabaseRealtime(onStatusChange: (status: 'connected'
       .eq('id', authData.user.id)
       .single();
 
-    if (userError || !userData?.restauranteId) {
-      console.error('El usuario no tiene un restaurante asignado:', userError?.message);
+    if (userError) {
+      console.error('Error al consultar datos del usuario:', userError.message);
+      onStatusChange('error', `Error de base de datos: ${userError.message}`);
+      return;
+    }
+
+    if (!userData?.restauranteId) {
+      console.error('El usuario no tiene un restaurante asignado.');
       onStatusChange('error', 'El usuario no tiene un restaurante asignado');
       return;
     }
