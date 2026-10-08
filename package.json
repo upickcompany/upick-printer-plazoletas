@@ -1,12 +1,13 @@
 {
   "name": "upick-printer-agent",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.1.0",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build && electron-builder",
+    "postinstall": "node scripts/patch-builder-util.js",
     "lint": "eslint .",
     "preview": "vite preview"
   },

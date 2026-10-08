@@ -39,8 +39,7 @@ function formatBogotaDate(dateStr: string): string {
   return `${day}/${month}/${year}, ${hoursStr}:${minutes} ${ampm}`;
 }
 
-function formatItemRow(desc: string, cant: string): string[] {
-  const lineLength = 32;
+function formatItemRow(desc: string, cant: string, lineLength = 32): string[] {
   const cantStr = cant.toString();
   const maxDescLen = lineLength - cantStr.length - 1; 
   
@@ -202,10 +201,16 @@ function generateReceiptHtml(orderData: any, printerConfig: ImpresoraConfig): st
   const nombreRest = orderData.Restaurante?.nombreSucursal || '';
   const fechaImpresion = orderData.createdAt ? formatBogotaDate(orderData.createdAt) : '';
 
+  const is58mm = printerConfig.anchoPapel === '58mm';
+  const bodyWidth = is58mm ? '48mm' : '66mm';
+  const bodyPadding = is58mm ? '4px 3px 20px 3px' : '4px 4px 24px 4px';
+  const fontSize = is58mm ? '11px' : '12px';
+  const qtyWidth = is58mm ? '28px' : '36px';
+
   let qrBase64 = '';
   try {
     const qrUrl = `https://plazoletas.upickcol.com/qrc/pedido/${orderData.id}`;
-    const qrBuffer = qr.imageSync(qrUrl, { type: 'png', size: 4, margin: 1 });
+    const qrBuffer = qr.imageSync(qrUrl, { type: 'png', size: is58mm ? 3 : 4, margin: 1 });
     qrBase64 = 'data:image/png;base64,' + qrBuffer.toString('base64');
   } catch (err) {
     console.error('Error generando QR base64:', err);
@@ -244,94 +249,114 @@ function generateReceiptHtml(orderData: any, printerConfig: ImpresoraConfig): st
 <head>
 <meta charset="utf-8">
 <style>
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
   @page {
     margin: 0;
-    size: 80mm auto;
+    size: ${is58mm ? '58mm auto' : '80mm auto'};
   }
   body {
     margin: 0;
-    padding: 6px 10px 24px 10px;
-    width: 72mm;
+    padding: ${bodyPadding};
+    width: ${bodyWidth};
+    max-width: ${bodyWidth};
     font-family: 'Courier New', Courier, monospace, sans-serif;
-    font-size: 13px;
+    font-size: ${fontSize};
     line-height: 1.25;
     color: #000;
     background: #fff;
     font-weight: 700;
+    word-wrap: break-word;
+    overflow: hidden;
   }
   .center { text-align: center; }
   .right { text-align: right; }
-  .title { font-size: 22px; font-weight: 900; line-height: 1.1; margin: 4px 0 2px 0; }
-  .subtitle { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
+  .title { font-size: ${is58mm ? '18px' : '22px'}; font-weight: 900; line-height: 1.1; margin: 4px 0 2px 0; }
+  .subtitle { font-size: ${is58mm ? '12px' : '14px'}; font-weight: 700; margin-bottom: 2px; }
   .badge-role {
     border: 2px dashed #000;
     padding: 3px 6px;
-    font-size: 14px;
+    font-size: ${is58mm ? '11px' : '13px'};
     font-weight: 900;
     margin: 4px auto;
     display: inline-block;
   }
   .reserva-box {
     border: 3px double #000;
-    padding: 6px;
-    margin: 8px 0;
+    padding: 5px;
+    margin: 6px 0;
     text-align: center;
   }
   .reserva-title {
-    font-size: 14px;
+    font-size: ${is58mm ? '11px' : '13px'};
     font-weight: 900;
     letter-spacing: 0.5px;
   }
   .reserva-time {
-    font-size: 16px;
+    font-size: ${is58mm ? '13px' : '15px'};
     font-weight: 900;
-    margin-top: 3px;
+    margin-top: 2px;
   }
   .divider {
     border-top: 1px dashed #000;
-    margin: 6px 0;
+    margin: 5px 0;
   }
   .table-header {
     display: flex;
     justify-content: space-between;
+    align-items: center;
     border-top: 1px dashed #000;
     border-bottom: 1px dashed #000;
     padding: 3px 0;
     font-weight: 900;
     margin-top: 4px;
+    font-size: ${fontSize};
+  }
+  .table-header-desc {
+    flex: 1;
+  }
+  .table-header-qty {
+    min-width: ${qtyWidth};
+    text-align: right;
   }
   .item-row {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    margin-top: 5px;
+    margin-top: 4px;
   }
   .item-desc {
     flex: 1;
-    padding-right: 8px;
-    font-size: 13px;
+    padding-right: 6px;
+    font-size: ${fontSize};
     word-break: break-word;
   }
   .item-qty {
-    font-size: 13px;
+    font-size: ${fontSize};
     white-space: nowrap;
     font-weight: 900;
+    min-width: ${qtyWidth};
+    text-align: right;
   }
   .item-detail {
-    font-size: 11px;
-    padding-left: 8px;
+    font-size: ${is58mm ? '10px' : '11px'};
+    padding-left: 6px;
     color: #111;
     margin-top: 1px;
+    word-break: break-word;
   }
   .qr-container {
     text-align: center;
-    margin-top: 10px;
+    margin-top: 8px;
   }
   .qr-img {
-    width: 135px;
-    height: 135px;
+    width: ${is58mm ? '105px' : '130px'};
+    height: ${is58mm ? '105px' : '130px'};
     display: block;
-    margin: 6px auto;
+    margin: 4px auto;
   }
 </style>
 </head>
@@ -340,9 +365,9 @@ function generateReceiptHtml(orderData: any, printerConfig: ImpresoraConfig): st
     <div class="badge-role">${roleTag}</div>
     <div class="title">UPick</div>
     ${nombreRest ? `<div class="subtitle">${nombreRest}</div>` : ''}
-    <div style="font-size: 16px; font-weight: 900; margin: 3px 0;">Pedido #${codigoTicket}</div>
+    <div style="font-size: ${is58mm ? '14px' : '16px'}; font-weight: 900; margin: 3px 0;">Pedido #${codigoTicket}</div>
     <div>PAGADO</div>
-    ${fechaImpresion ? `<div style="font-size: 12px; margin-top: 2px;">${fechaImpresion}</div>` : ''}
+    ${fechaImpresion ? `<div style="font-size: ${is58mm ? '10px' : '12px'}; margin-top: 2px;">${fechaImpresion}</div>` : ''}
   </div>
 
   ${esReserva ? `
@@ -360,14 +385,14 @@ function generateReceiptHtml(orderData: any, printerConfig: ImpresoraConfig): st
   <div class="divider"></div>
 
   <div class="table-header">
-    <div>DESCRIPCION</div>
-    <div>CANT</div>
+    <div class="table-header-desc">DESCRIPCION</div>
+    <div class="table-header-qty">CANT</div>
   </div>
 
   ${itemsHtml}
 
   <div class="divider"></div>
-  <div class="right" style="font-size: 13px; font-weight: 900;">Total articulos: ${totalItems}</div>
+  <div class="right" style="font-size: ${is58mm ? '11px' : '13px'}; font-weight: 900;">Total articulos: ${totalItems}</div>
 
   <div class="center" style="margin-top: 8px;">
     <div>Gracias por usar UPick!</div>
@@ -491,22 +516,28 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
             printer.text(fechaImpresion);
           }
 
+          const is58mm = printerConfig.anchoPapel === '58mm';
+          const lineLength = is58mm ? 32 : 42;
+          const dividerLine = '-'.repeat(lineLength);
+          const reservaDivider = '='.repeat(lineLength);
+          const headerLine = 'DESCRIPCION'.padEnd(lineLength - 4) + 'CANT';
+
           // BANNER DE RESERVA
           if (esReserva) {
             printer
               .align('ct')
-              .text('================================')
+              .text(reservaDivider)
               .style('b')
               .text('*** COMANDA DE RESERVA ***')
               .text(`PROGRAMADO PARA: ${fechaProgramadaTexto}`)
               .text(`HORA ENTREGA: ${horaProgramadaTexto}`)
               .style('normal')
-              .text('================================');
+              .text(reservaDivider);
           }
 
           printer
             .align('ct')
-            .text('--------------------------------')
+            .text(dividerLine)
             .align('lt')
             .text(`Cliente: ${transaccionInfo}`);
 
@@ -520,10 +551,10 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
 
           printer
             .align('ct')
-            .text('--------------------------------')
+            .text(dividerLine)
             .align('lt')
-            .text('DESCRIPCION                 CANT')
-            .text('--------------------------------');
+            .text(headerLine)
+            .text(dividerLine);
 
           let totalItems = 0;
           if (orderData.DetallePedido && orderData.DetallePedido.length > 0) {
@@ -534,7 +565,7 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
               const desc = removeAccents(item.ProductoMenu?.nombre || 'Producto');
               const cant = cantNum.toString();
               
-              const formattedLines = formatItemRow(desc, cant);
+              const formattedLines = formatItemRow(desc, cant, lineLength);
               formattedLines.forEach(line => printer.text(line));
 
               if (item.notas) {
@@ -554,7 +585,7 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
             .align('rt')
             .text(`Total articulos: ${totalItems}`)
             .align('ct')
-            .text('--------------------------------')
+            .text(dividerLine)
             .text('Gracias por usar UPick!')
             .feed(1)
             .text('Para el restaurante:')
@@ -828,20 +859,33 @@ export async function testPrinter(config: any): Promise<boolean> {
         return false;
       }
 
+      const is58mm = config.anchoPapel === '58mm';
+      const bodyWidth = is58mm ? '48mm' : '66mm';
       const testHtml = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <style>
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+  @page {
+    margin: 0;
+    size: ${is58mm ? '58mm auto' : '80mm auto'};
+  }
   body {
     font-family: 'Courier New', Courier, monospace;
     text-align: center;
-    padding: 12px 6px;
-    width: 72mm;
+    padding: 10px 4px 18px 4px;
+    width: ${bodyWidth};
+    max-width: ${bodyWidth};
+    font-size: ${is58mm ? '11px' : '12px'};
     color: #000;
   }
-  h2 { font-size: 16px; margin: 0 0 6px 0; }
-  p { font-size: 12px; margin: 3px 0; }
+  h2 { font-size: ${is58mm ? '14px' : '16px'}; margin: 0 0 6px 0; }
+  p { font-size: ${is58mm ? '11px' : '12px'}; margin: 3px 0; }
 </style>
 </head>
 <body>
@@ -850,6 +894,7 @@ export async function testPrinter(config: any): Promise<boolean> {
   <p>Impresora: ${config.nombre || deviceName}</p>
   <p>Dispositivo: ${deviceName}</p>
   <p>Rol: ${config.rolCopia || 'AMBOS'}</p>
+  <p>Papel: ${is58mm ? '58 mm (Mini)' : '80 mm (Estándar)'}</p>
   <p>--------------------------------</p>
   <p>¡Conexión USB/Windows Exitosa!</p>
   <p>${new Date().toLocaleString('es-CO')}</p>

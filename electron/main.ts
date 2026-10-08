@@ -79,9 +79,10 @@ function createWindow() {
 
   // Set up auto-launch on system startup
   if (app.isPackaged) {
+    const targetExe = process.env.PORTABLE_EXECUTABLE_FILE || app.getPath('exe')
     app.setLoginItemSettings({
       openAtLogin: true,
-      path: app.getPath('exe'),
+      path: targetExe,
       args: ['--hidden']
     })
   } else {

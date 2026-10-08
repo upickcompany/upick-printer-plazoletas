@@ -8,6 +8,7 @@ export interface ImpresoraConfig {
   port?: number;
   deviceName?: string;
   rolCopia: 'AMBOS' | 'COCINA' | 'CAJA';
+  anchoPapel?: '80mm' | '58mm';
   activo: boolean;
 }
 
@@ -42,6 +43,7 @@ export const store = new Store<AppConfig>({
         port: 9100,
         deviceName: '',
         rolCopia: 'AMBOS',
+        anchoPapel: '80mm',
         activo: true
       }
     ]
@@ -64,6 +66,7 @@ try {
       port: Number(legacyPort) || 9100,
       deviceName: '',
       rolCopia: 'AMBOS',
+      anchoPapel: '80mm',
       activo: true
     };
     store.set('impresoras', [migratedPrinter]);

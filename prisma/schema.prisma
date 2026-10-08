@@ -1,0 +1,879 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Usuario {
+  id             String                @id @db.Uuid
+  email          String                @unique
+  nombre         String?
+  telefono       String?
+  rol            RolUsuario            @default(CLIENTE)
+  restauranteId  String?               @db.Uuid
+  lugarId        String?               @db.Uuid
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  restaurante    Restaurante?          @relation(fields: [restauranteId], references: [id])
+  lugar          Lugar?                @relation(fields: [lugarId], references: [id])
+  metodosPago    MetodoPagoUsuario[]
+  billetera      BilleteraUsuario?
+  tarjetasSellos TarjetaSelloCliente[]
+  recompensas    RecompensaCliente[]
+  usosCupones    UsoCupon[]
+  transacciones  TransaccionPago[]
+
+  @@index([restauranteId])
+  @@index([lugarId])
+  @@index([telefono])
+  @@index([rol])
+}
+
+model Marca {
+  id                    String                 @id @default(uuid()) @db.Uuid
+  nombre                String
+  logoUrl               String?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  categoriasMenu        CategoriaMenu[]
+  gruposAdicionales     GrupoAdicional[]
+  restaurantes          Restaurante[]
+  programasFidelizacion ProgramaFidelizacion[]
+  cupones               CuponDescuento[]
+}
+
+model Pais {
+  id          String   @id @default(uuid()) @db.Uuid
+  nombre      String
+  codigo      String   @unique
+  moneda      String
+  zonaHoraria String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  ciudades    Ciudad[]
+}
+
+model Ciudad {
+  id        String   @id @default(uuid()) @db.Uuid
+  paisId    String   @db.Uuid
+  nombre    String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  pais      Pais     @relation(fields: [paisId], references: [id])
+  lugares   Lugar[]
+
+  @@index([paisId])
+}
+
+model Lugar {
+  id          String            @id @default(uuid()) @db.Uuid
+  nombre      String
+  slug        String            @unique
+  imageUrl    String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  ciudadId    String?           @db.Uuid
+  ciudad      Ciudad?           @relation(fields: [ciudadId], references: [id])
+  plazoletas  Plazoleta[]
+  usuarios    Usuario[]
+  ubicaciones UbicacionFisica[]
+
+  @@index([ciudadId])
+}
+
+model Plazoleta {
+  id            String            @id @default(uuid()) @db.Uuid
+  nombre        String
+  ubicacion     String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  lugarId       String            @db.Uuid
+  slug          String            @unique
+  imageUrl      String?
+  ubicaciones   UbicacionFisica[]
+  lugar         Lugar             @relation(fields: [lugarId], references: [id])
+  restaurantes  Restaurante[]
+  transacciones TransaccionPago[]
+  cupones       CuponDescuento[]
+
+  @@index([lugarId])
+}
+
+model Restaurante {
+  id                        String                          @id @default(uuid()) @db.Uuid
+  marcaId                   String                          @db.Uuid
+  plazoletaId               String                          @db.Uuid
+  nombreSucursal            String
+  estaAbierto               Boolean                         @default(false)
+  horarioAtencion           Json?
+  createdAt                 DateTime                        @default(now())
+  updatedAt                 DateTime                        @updatedAt
+  montoFeeServicio          Float                           @default(0)
+  porcentajeFeeServicio     Float                           @default(0)
+  porcentajeComision        Float                           @default(0)
+  montoFijoComision         Float                           @default(0)
+  umbralExencionFee         Float?
+  imageUrl                  String?
+  asumeIvaComision          Boolean                         @default(true)
+  solicitaPropina           Boolean                         @default(true)
+  porcentajeComisionPropina Float                           @default(0)
+  ofreceEntregaAMesa        Boolean                         @default(true)
+  permitePedidosInmediatos  Boolean                         @default(true)
+  posProvider               ProveedorPOS                    @default(NONE)
+  posSettings               Json?
+  datosLiquidacion          Json?
+  permiteReservas           Boolean                         @default(false)
+  anticipacionMinimaMinutos Int                             @default(60)
+  tiempoPaseComandaMinutos  Int                             @default(25)
+  franjasHorariasReserva    Json?
+  ordenVisual               Int                             @default(0)
+  disponibilidadOpciones    DisponibilidadOpcionAdicional[]
+  disponibilidad            DisponibilidadProducto[]
+  pedidos                   PedidoRestaurante[]
+  incidencias               Incidencia[]
+  cortesCaja                CorteCaja[]
+  marca                     Marca                           @relation(fields: [marcaId], references: [id])
+  plazoleta                 Plazoleta                       @relation(fields: [plazoletaId], references: [id])
+  usuarios                  Usuario[]
+  ubicaciones               UbicacionFisica[]
+  programasFidelizacion     ProgramaFidelizacion[]
+  cupones                   CuponDescuento[]
+
+  @@index([marcaId])
+  @@index([plazoletaId])
+}
+
+model CategoriaMenu {
+  id          String         @id @default(uuid()) @db.Uuid
+  marcaId     String         @db.Uuid
+  nombre      String
+  ordenVisual Int            @default(0)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  marca       Marca          @relation(fields: [marcaId], references: [id])
+  productos   ProductoMenu[]
+
+  @@index([marcaId])
+}
+
+model ProductoMenu {
+  id                      String                   @id @default(uuid()) @db.Uuid
+  categoriaId             String                   @db.Uuid
+  nombre                  String
+  precioBaseGlobal        Float
+  descripcion             String?
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  imageUrl                String?
+  precioPromocion         Float?
+  codigoPos               String?
+  asignacionesAdicionales AsignacionAdicional[]
+  detallesPedido          DetallePedido[]
+  disponibilidadLocal     DisponibilidadProducto[]
+  categoria               CategoriaMenu            @relation(fields: [categoriaId], references: [id])
+  programasPremio         ProgramaFidelizacion[]
+  recompensas             RecompensaCliente[]
+
+  @@index([categoriaId])
+}
+
+model DisponibilidadProducto {
+  restauranteId        String       @db.Uuid
+  productoId           String       @db.Uuid
+  estaDisponible       Boolean      @default(true)
+  precioLocal          Float?
+  precioPromocionLocal Float?
+  producto             ProductoMenu @relation(fields: [productoId], references: [id])
+  restaurante          Restaurante  @relation(fields: [restauranteId], references: [id])
+
+  @@id([restauranteId, productoId])
+  @@index([productoId])
+}
+
+model GrupoAdicional {
+  id           String                @id @default(uuid()) @db.Uuid
+  marcaId      String                @db.Uuid
+  nombre       String
+  minSeleccion Int                   @default(0)
+  maxSeleccion Int                   @default(1)
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+  asignaciones AsignacionAdicional[]
+  marca        Marca                 @relation(fields: [marcaId], references: [id])
+  opciones     OpcionAdicional[]
+
+  @@index([marcaId])
+}
+
+model OpcionAdicional {
+  id                  String                          @id @default(uuid()) @db.Uuid
+  grupoId             String                          @db.Uuid
+  nombre              String
+  precioExtraGlobal   Float                           @default(0)
+  createdAt           DateTime                        @default(now())
+  updatedAt           DateTime                        @updatedAt
+  codigoPos           String?
+  disponibilidadLocal DisponibilidadOpcionAdicional[]
+  elecciones          EleccionAdicional[]
+  grupo               GrupoAdicional                  @relation(fields: [grupoId], references: [id])
+
+  @@index([grupoId])
+}
+
+model AsignacionAdicional {
+  productoId String         @db.Uuid
+  grupoId    String         @db.Uuid
+  grupo      GrupoAdicional @relation(fields: [grupoId], references: [id])
+  producto   ProductoMenu   @relation(fields: [productoId], references: [id])
+
+  @@id([productoId, grupoId])
+  @@index([grupoId])
+}
+
+model DisponibilidadOpcionAdicional {
+  restauranteId  String          @db.Uuid
+  opcionId       String          @db.Uuid
+  estaDisponible Boolean         @default(true)
+  precioLocal    Float?
+  opcion         OpcionAdicional @relation(fields: [opcionId], references: [id])
+  restaurante    Restaurante     @relation(fields: [restauranteId], references: [id])
+
+  @@id([restauranteId, opcionId])
+  @@index([opcionId])
+}
+
+model TransaccionPago {
+  id                         String                    @id @default(uuid()) @db.Uuid
+  plazoletaId                String                    @db.Uuid
+  ubicacionFisicaId          String?                   @db.Uuid
+  ubicacionEntregaId         String?                   @db.Uuid
+  ubicacionEntregaTexto      String?
+  sessionId                  String?
+  clienteId                  String?                   @db.Uuid
+  usuarioId                  String?                   @db.Uuid
+  telefonoCliente            String
+  tipoPedido                 TipoPedido
+  montoTotal                 Float
+  montoPropina               Float                     @default(0)
+  montoDescuentosCupones     Float                     @default(0)
+  montoCreditosUsados        Float                     @default(0)
+  montoPagadoPasarela        Float                     @default(0)
+  estadoPago                 EstadoPago                @default(PENDING)
+  sellosOtorgados            Boolean                   @default(false)
+  esReserva                  Boolean                   @default(false)
+  horaProgramadaInicio       String?
+  horaProgramadaFin          String?
+  fechaProgramada            DateTime?
+  createdAt                  DateTime                  @default(now())
+  updatedAt                  DateTime                  @updatedAt
+  nombreCliente              String?
+  solicitaFacturaElectronica Boolean                   @default(false)
+  tipoDocumentoFacturacion   String?
+  documentoFacturacion       String?
+  nombreFacturacion          String?
+  emailFacturacion           String?
+  detalleWompi               DetalleRecaudoWompi?
+  detalleCredibanco          DetalleRecaudoCredibanco?
+  detalleBreB                DetalleRecaudoBreB?
+  detallePse                 DetalleRecaudoPse?
+  pedidosRestaurante         PedidoRestaurante[]
+  usosCupones                UsoCupon[]
+
+  ubicacionFisica  UbicacionFisica? @relation("TransaccionUbicacionQR", fields: [ubicacionFisicaId], references: [id])
+  ubicacionEntrega UbicacionFisica? @relation("TransaccionUbicacionEntrega", fields: [ubicacionEntregaId], references: [id])
+  plazoleta        Plazoleta        @relation(fields: [plazoletaId], references: [id])
+  cliente          Cliente?         @relation(fields: [clienteId], references: [id])
+  usuario          Usuario?         @relation(fields: [usuarioId], references: [id])
+
+  @@index([plazoletaId])
+  @@index([ubicacionFisicaId])
+  @@index([ubicacionEntregaId])
+  @@index([sessionId])
+  @@index([clienteId])
+  @@index([usuarioId])
+  @@index([estadoPago])
+  @@index([telefonoCliente])
+  @@index([createdAt])
+  @@index([plazoletaId, estadoPago, createdAt])
+  @@index([estadoPago, createdAt])
+}
+
+model Cliente {
+  id            String            @id @default(uuid()) @db.Uuid
+  telefono      String            @unique
+  nombre        String?
+  createdAt     DateTime          @default(now())
+  transacciones TransaccionPago[]
+}
+
+enum TipoUbicacion {
+  MESA
+  ROMPETRAFICO
+  ENTRADA
+  ESTRATEGICO
+  OTRO
+}
+
+model UbicacionFisica {
+  id                        String        @id @default(uuid()) @db.Uuid
+  lugarId                   String        @db.Uuid
+  plazoletaId               String?       @db.Uuid
+  restauranteId             String?       @db.Uuid
+  tipo                      TipoUbicacion @default(MESA)
+  zona                      String?
+  identificador             String
+  aptaParaEntrega           Boolean       @default(true)
+  restaurantesDestacadosIds String[]      @default([])
+
+  lugar       Lugar        @relation(fields: [lugarId], references: [id])
+  plazoleta   Plazoleta?   @relation(fields: [plazoletaId], references: [id])
+  restaurante Restaurante? @relation(fields: [restauranteId], references: [id])
+
+  transaccionesQR      TransaccionPago[] @relation("TransaccionUbicacionQR")
+  transaccionesEntrega TransaccionPago[] @relation("TransaccionUbicacionEntrega")
+
+  @@index([lugarId])
+  @@index([plazoletaId])
+  @@index([restauranteId])
+}
+
+model EventoEscaneoQR {
+  id                String   @id @default(uuid()) @db.Uuid
+  ubicacionFisicaId String
+  lugarId           String
+  sessionId         String
+  createdAt         DateTime @default(now())
+
+  @@index([lugarId])
+  @@index([ubicacionFisicaId])
+  @@index([createdAt])
+}
+
+model DetalleRecaudoWompi {
+  id                String          @id @default(uuid()) @db.Uuid
+  transaccionPagoId String          @unique @db.Uuid
+  referenciaWompi   String          @unique
+  metodoPago        String?
+  comisionWompi     Float?
+  createdAt         DateTime        @default(now())
+  transaccionPago   TransaccionPago @relation(fields: [transaccionPagoId], references: [id], onDelete: Cascade)
+}
+
+model DetalleRecaudoCredibanco {
+  id                 String          @id @default(uuid()) @db.Uuid
+  transaccionPagoId  String          @unique @db.Uuid
+  orderId            String          @unique // mdOrder devuelto por Credibanco
+  orderNumber        String          @unique // orderNumber de UPick (ej: PLAZO-...)
+  metodoPago         String? // CARD
+  bindingId          String? // Token utilizado si fue Card on File
+  tarjetaMascara     String? // 411111******1111
+  franquicia         String? // VISA, MASTERCARD, etc.
+  codigoAutorizacion String? // authCode
+  comisionCredibanco Float?          @default(0)
+  createdAt          DateTime        @default(now())
+  transaccionPago    TransaccionPago @relation(fields: [transaccionPagoId], references: [id], onDelete: Cascade)
+}
+
+model DetalleRecaudoBreB {
+  id                   String    @id @default(uuid()) @db.Uuid
+  transaccionPagoId    String    @unique @db.Uuid
+  anchorHandle         String    @unique
+  keyValue             String // Ej: @UPK50128
+  expectedAmount       Float // Monto en COP
+  estadoLlave          String    @default("ACTIVE") // ACTIVE, CANCELLED, EXPIRED
+  intentHandle         String?
+  hashCreacion         String?
+  luid                 String?
+  hashCancelacion      String?
+  canceladaAt          DateTime?
+  montoRecibido        Float? // Monto real transferido por el cliente
+  creditosReembolsados Boolean   @default(false)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  transaccionPago TransaccionPago @relation(fields: [transaccionPagoId], references: [id], onDelete: Cascade)
+
+  @@index([keyValue])
+  @@index([anchorHandle])
+  @@index([estadoLlave])
+  @@index([keyValue, estadoLlave])
+  @@index([anchorHandle, estadoLlave])
+}
+
+model DetalleRecaudoPse {
+  id                   String    @id @default(uuid()) @db.Uuid
+  transaccionPagoId    String    @unique @db.Uuid
+  intentHandle         String    @unique
+  ticketId             Int?
+  trazabilityCode      String?   // CUS en PSE
+  bankCode             String?   // ej: 1022
+  bankName             String?   // ej: BANCO UNION COLOMBIANO
+  userType             String?   // person | company
+  identificationType   String?   // CedulaDeCiudadania, NIT, etc.
+  identificationNumber String?
+  fullName             String?
+  email                String?
+  phoneNumber          String?
+  address              String?
+  pseUrl               String?
+  estadoPse            String?   @default("registered") // registered, pending, completed, rejected, failed
+  confirmedProofSent   Boolean   @default(false)
+  confirmedProofSentAt DateTime?
+  coreId               String?
+  errorDetail          String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  transaccionPago TransaccionPago @relation(fields: [transaccionPagoId], references: [id], onDelete: Cascade)
+
+  @@index([intentHandle])
+  @@index([trazabilityCode])
+  @@index([estadoPse])
+}
+
+model PedidoRestaurante {
+  id                   String          @id @default(uuid()) @db.Uuid
+  transaccionPagoId    String          @db.Uuid
+  restauranteId        String          @db.Uuid
+  estado               EstadoPedido    @default(PENDING)
+  subtotalRestaurante  Float
+  comisionUpick        Float
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+  montoFeeServicio     Float           @default(0)
+  montoPropina         Float           @default(0)
+  comisionUpickPropina Float           @default(0)
+  esReserva            Boolean         @default(false)
+  horaProgramadaInicio String?
+  horaProgramadaFin    String?
+  fechaProgramada      DateTime?
+  printStatus          EstadoImpresion @default(PENDING)
+  printedAt            DateTime?
+  detalles             DetallePedido[]
+  incidencias          Incidencia[]
+  montoDescuentoCupon  Float           @default(0)
+  emisorDescuento      EmisorCupon?
+  cuponCodigo          String?
+  restaurante          Restaurante     @relation(fields: [restauranteId], references: [id])
+  transaccionPago      TransaccionPago @relation(fields: [transaccionPagoId], references: [id], onDelete: Cascade)
+
+  @@index([transaccionPagoId])
+  @@index([restauranteId])
+  @@index([restauranteId, estado, createdAt])
+  @@index([restauranteId, printStatus])
+  @@index([createdAt])
+  @@index([estado, createdAt])
+}
+
+model DetallePedido {
+  id                    String              @id @default(uuid()) @db.Uuid
+  pedidoRestauranteId   String              @db.Uuid
+  productoId            String              @db.Uuid
+  cantidad              Int                 @default(1)
+  precioUnitarioCobrado Float
+  notas                 String?
+  createdAt             DateTime            @default(now())
+  pedidoRestaurante     PedidoRestaurante   @relation(fields: [pedidoRestauranteId], references: [id], onDelete: Cascade)
+  producto              ProductoMenu        @relation(fields: [productoId], references: [id])
+  eleccionesAdicionales EleccionAdicional[]
+  incidencias           Incidencia[]
+
+  @@index([pedidoRestauranteId])
+  @@index([productoId])
+}
+
+model EleccionAdicional {
+  id              String          @id @default(uuid()) @db.Uuid
+  detallePedidoId String          @db.Uuid
+  opcionId        String          @db.Uuid
+  nombreOpcion    String
+  precioCobrado   Float
+  createdAt       DateTime        @default(now())
+  detallePedido   DetallePedido   @relation(fields: [detallePedidoId], references: [id], onDelete: Cascade)
+  opcion          OpcionAdicional @relation(fields: [opcionId], references: [id])
+
+  @@index([detallePedidoId])
+  @@index([opcionId])
+}
+
+enum TipoPedido {
+  ENTREGA_MESA
+  RECOGIDA
+}
+
+enum EstadoPago {
+  PENDING
+  APROBADO
+  RECHAZADO
+}
+
+enum EstadoPedido {
+  PENDING
+  PREPARANDO
+  LISTO
+  ENTREGADO
+  CANCELADO
+}
+
+enum RolUsuario {
+  SUPERADMIN
+  ADMIN_RESTAURANTE
+  ADMIN_LUGAR
+  CLIENTE
+}
+
+enum EstadoImpresion {
+  PENDING
+  PRINTED
+  FAILED
+}
+
+enum EstadoIncidencia {
+  REPORTADA
+  EN_PROCESO_SOPORTE
+  RESUELTA
+}
+
+enum PreferenciaReembolso {
+  CREDITOS
+  METODO_PAGO
+}
+
+model Incidencia {
+  id                   String                @id @default(uuid()) @db.Uuid
+  pedidoRestauranteId  String                @db.Uuid
+  detallePedidoId      String?               @db.Uuid
+  restauranteId        String                @db.Uuid
+  motivo               String                @default("OUT_OF_STOCK")
+  estado               EstadoIncidencia      @default(REPORTADA)
+  codigoVerificacion   String                @unique
+  notasSoporte         String?
+  preferenciaReembolso PreferenciaReembolso?
+  reembolsadoACredito  Boolean               @default(false)
+  montoReembolsado     Float?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+
+  pedidoRestaurante PedidoRestaurante @relation(fields: [pedidoRestauranteId], references: [id])
+  detallePedido     DetallePedido?    @relation(fields: [detallePedidoId], references: [id])
+  restaurante       Restaurante       @relation(fields: [restauranteId], references: [id])
+
+  @@index([pedidoRestauranteId])
+  @@index([detallePedidoId])
+  @@index([restauranteId])
+  @@index([estado])
+  @@index([restauranteId, estado])
+  @@index([createdAt])
+}
+
+enum EstadoCorte {
+  PENDING
+  TRANSFERRED
+}
+
+model CorteCaja {
+  id                   String      @id @default(uuid()) @db.Uuid
+  restauranteId        String      @db.Uuid
+  montoTotal           Float // Neto a pagar al restaurante
+  ventasBrutas         Float
+  comisiones           Float
+  propinas             Float
+  ivaComisiones        Float       @default(0)
+  feeServicio          Float       @default(0)
+  estado               EstadoCorte @default(PENDING)
+  fechaCierre          DateTime
+  fechaEstimadaPago    DateTime?
+  referenciaPago       String?
+  montoKamin           Float       @default(0)
+  montoCredibanco      Float       @default(0)
+  estadoKamin          EstadoCorte @default(PENDING)
+  estadoCredibanco     EstadoCorte @default(PENDING)
+  referenciaKamin      String?
+  referenciaCredibanco String?
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+
+  restaurante Restaurante @relation(fields: [restauranteId], references: [id])
+
+  @@index([restauranteId])
+  @@index([estado])
+  @@index([fechaCierre])
+  @@index([restauranteId, estado])
+  @@index([referenciaKamin])
+  @@index([referenciaPago])
+}
+
+model MetodoPagoUsuario {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  usuarioId        String   @db.Uuid
+  proveedor        String   @default("WOMPI") // "WOMPI" | "CREDIBANCO"
+  token            String // Token seguro generado por Wompi (tok_...) o Credibanco (bindingId)
+  alias            String? // Nombre identificador de la tarjeta (ej. "Bancolombia Personal")
+  marca            String // VISA, MASTERCARD, AMEX, etc.
+  ultimosCuatro    String // Ej. "4242"
+  nombreTitular    String? // Nombre en la tarjeta
+  expMes           String? // Mes de vencimiento (ej. "12")
+  expAnio          String? // Año de vencimiento (ej. "28")
+  esPredeterminado Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @default(now()) @updatedAt
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([usuarioId])
+}
+
+enum TipoEntidadAuditoria {
+  RESTAURANTE
+  MENU_PRODUCTO
+  PEDIDO
+  USUARIO_ROL
+  CONFIGURACION
+}
+
+enum TipoAccionAuditoria {
+  CAMBIO_PRECIO
+  CAMBIO_COMISION_FEE
+  CANCELACION_PEDIDO
+  CAMBIO_ESTADO_PEDIDO
+  ASIGNACION_ROL
+  ELIMINACION_ITEM
+}
+
+model RegistroAuditoria {
+  id           String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  usuarioId    String?
+  emailUsuario String?
+  rolUsuario   String?
+  entidad      TipoEntidadAuditoria
+  entidadId    String
+  accion       TipoAccionAuditoria
+  datosPrevios Json?
+  datosNuevos  Json?
+  metadata     Json?
+  ipAddress    String?
+  userAgent    String?
+  createdAt    DateTime             @default(now())
+
+  @@index([entidad, entidadId])
+  @@index([usuarioId])
+  @@index([createdAt])
+  @@index([accion])
+}
+
+// ==========================================
+// MÓDULO DE CRÉDITOS Y BILLETERA
+// ==========================================
+
+enum TipoMovimientoBilletera {
+  REEMBOLSO_INCIDENCIA
+  PAGO_PEDIDO
+  BONIFICACION_UPICK
+  AJUSTE_MANUAL
+}
+
+model BilleteraUsuario {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  usuarioId String   @unique @db.Uuid
+  saldoCOP  Float    @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  usuario     Usuario               @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  movimientos MovimientoBilletera[]
+}
+
+model MovimientoBilletera {
+  id            String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  billeteraId   String                  @db.Uuid
+  tipo          TipoMovimientoBilletera
+  monto         Float // Positivo para ingresos, negativo para egresos
+  saldoAnterior Float
+  saldoNuevo    Float
+  referenciaId  String? // UUID de TransaccionPago o Incidencia
+  descripcion   String
+  createdAt     DateTime                @default(now())
+
+  billetera BilleteraUsuario @relation(fields: [billeteraId], references: [id], onDelete: Cascade)
+
+  @@index([billeteraId])
+  @@index([billeteraId, createdAt(sort: Desc)])
+  @@index([tipo])
+  @@index([referenciaId])
+  @@index([createdAt])
+}
+
+// ==========================================
+// MÓDULO DE FIDELIZACIÓN (SELLOS PUNCH-CARD)
+// ==========================================
+
+enum TipoPremioFidelizacion {
+  PRODUCTO_GRATIS
+  DESCUENTO_FIJO
+  DESCUENTO_PORCENTAJE
+}
+
+enum NivelProgramaFidelizacion {
+  MARCA
+  RESTAURANTE
+}
+
+model ProgramaFidelizacion {
+  id                     String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nivel                  NivelProgramaFidelizacion @default(RESTAURANTE)
+  marcaId                String?                   @db.Uuid
+  restauranteId          String?                   @db.Uuid
+  nombre                 String
+  descripcion            String?
+  metaConsumos           Int                       @default(5)
+  montoMinimoPorConsumo  Float                     @default(0)
+  tipoPremio             TipoPremioFidelizacion    @default(PRODUCTO_GRATIS)
+  productoPremioId       String?                   @db.Uuid
+  valorDescuento         Float?
+  vigenciaDiasRecompensa Int                       @default(30)
+  esRecurrente           Boolean                   @default(true)
+  activo                 Boolean                   @default(true)
+  createdAt              DateTime                  @default(now())
+  updatedAt              DateTime                  @default(now()) @updatedAt
+
+  marca            Marca?                @relation(fields: [marcaId], references: [id], onDelete: Cascade)
+  restaurante      Restaurante?          @relation(fields: [restauranteId], references: [id], onDelete: Cascade)
+  productoPremio   ProductoMenu?         @relation(fields: [productoPremioId], references: [id])
+  tarjetasClientes TarjetaSelloCliente[]
+  recompensas      RecompensaCliente[]
+
+  @@index([marcaId])
+  @@index([marcaId, activo])
+  @@index([restauranteId])
+  @@index([restauranteId, activo])
+  @@index([activo])
+  @@index([productoPremioId])
+}
+
+model TarjetaSelloCliente {
+  id                     String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  usuarioId              String   @db.Uuid
+  programaFidelizacionId String   @db.Uuid
+  sellosActuales         Int      @default(0)
+  cicloActual            Int      @default(1)
+  totalCiclosCompletados Int      @default(0)
+  updatedAt              DateTime @default(now()) @updatedAt
+  createdAt              DateTime @default(now())
+
+  usuario  Usuario              @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  programa ProgramaFidelizacion @relation(fields: [programaFidelizacionId], references: [id], onDelete: Cascade)
+
+  @@unique([usuarioId, programaFidelizacionId])
+  @@index([usuarioId])
+  @@index([programaFidelizacionId])
+}
+
+enum EstadoRecompensa {
+  DISPONIBLE
+  REDIMIDA
+  EXPIRADA
+}
+
+model RecompensaCliente {
+  id                     String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  usuarioId              String                 @db.Uuid
+  programaFidelizacionId String                 @db.Uuid
+  codigo                 String                 @unique
+  tipoPremio             TipoPremioFidelizacion
+  productoPremioId       String?                @db.Uuid
+  valorDescuento         Float?
+  estado                 EstadoRecompensa       @default(DISPONIBLE)
+  fechaExpiracion        DateTime
+  transaccionRedencionId String?                @db.Uuid
+  createdAt              DateTime               @default(now())
+  redimidaAt             DateTime?
+
+  usuario        Usuario              @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  programa       ProgramaFidelizacion @relation(fields: [programaFidelizacionId], references: [id], onDelete: Cascade)
+  productoPremio ProductoMenu?        @relation(fields: [productoPremioId], references: [id])
+
+  @@index([usuarioId, estado])
+  @@index([programaFidelizacionId])
+  @@index([productoPremioId])
+  @@index([transaccionRedencionId])
+}
+
+// ==========================================
+// MÓDULO DE CUPONES PROMOCIONALES
+// ==========================================
+
+enum TipoDescuentoCupon {
+  PORCENTAJE
+  MONTO_FIJO
+}
+
+enum EmisorCupon {
+  UPICK
+  MARCA
+  RESTAURANTE
+}
+
+model CuponDescuento {
+  id                   String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  codigo               String             @unique
+  descripcion          String?
+  emisor               EmisorCupon        @default(RESTAURANTE)
+  marcaId              String?            @db.Uuid
+  restauranteId        String?            @db.Uuid
+  plazoletaId          String?            @db.Uuid
+  tipoDescuento        TipoDescuentoCupon
+  valorDescuento       Float
+  descuentoMaximo      Float?
+  montoMinimoPedido    Float              @default(0)
+  fechaInicio          DateTime           @default(now())
+  fechaFin             DateTime
+  limiteUsosTotal      Int?
+  limiteUsosPorUsuario Int                @default(1)
+  usosActuales         Int                @default(0)
+  activo               Boolean            @default(true)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  marca       Marca?       @relation(fields: [marcaId], references: [id], onDelete: Cascade)
+  restaurante Restaurante? @relation(fields: [restauranteId], references: [id], onDelete: Cascade)
+  plazoleta   Plazoleta?   @relation(fields: [plazoletaId], references: [id], onDelete: Cascade)
+  usos        UsoCupon[]
+
+  @@index([emisor])
+  @@index([marcaId])
+  @@index([restauranteId])
+  @@index([restauranteId, activo])
+  @@index([plazoletaId])
+  @@index([plazoletaId, activo])
+  @@index([activo])
+}
+
+model UsoCupon {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cuponId           String   @db.Uuid
+  usuarioId         String   @db.Uuid
+  telefonoCliente   String
+  transaccionPagoId String   @db.Uuid
+  montoDescuento    Float
+  createdAt         DateTime @default(now())
+
+  cupon           CuponDescuento  @relation(fields: [cuponId], references: [id], onDelete: Cascade)
+  usuario         Usuario         @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  transaccionPago TransaccionPago @relation(fields: [transaccionPagoId], references: [id], onDelete: Cascade)
+
+  @@index([cuponId])
+  @@index([cuponId, usuarioId])
+  @@index([usuarioId])
+  @@index([telefonoCliente])
+  @@index([transaccionPagoId])
+}
+
+enum ProveedorPOS {
+  NONE
+  SIIGO
+}

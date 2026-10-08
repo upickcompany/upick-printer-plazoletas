@@ -8,6 +8,7 @@ export interface ImpresoraConfig {
   port?: number;
   deviceName?: string;
   rolCopia: 'AMBOS' | 'COCINA' | 'CAJA';
+  anchoPapel?: '80mm' | '58mm';
   activo: boolean;
 }
 
@@ -70,6 +71,7 @@ function App() {
             port: Number(config.printerPort) || 9100,
             deviceName: '',
             rolCopia: 'AMBOS',
+            anchoPapel: '80mm',
             activo: true
           }
         ])
@@ -168,6 +170,7 @@ function App() {
       ip: '192.168.1.100',
       port: 9100,
       rolCopia: impresoras.length === 0 ? 'AMBOS' : (impresoras.length === 1 ? 'COCINA' : 'CAJA'),
+      anchoPapel: '80mm',
       activo: true
     }
     setImpresoras(prev => [...prev, newPrinter])
@@ -555,8 +558,8 @@ function App() {
                     </div>
                   </div>
 
-                  {/* Card Body: Connection Type & Parameters */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                  {/* Card Body: Connection Type, Role & Paper Width */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
                     {/* Connection Type Tabs */}
                     <div>
                       <label className="block text-xs font-semibold text-neutral-400 mb-1.5">
@@ -566,31 +569,31 @@ function App() {
                         <button
                           type="button"
                           onClick={() => handleUpdatePrinter(printer.id, { tipoConexion: 'windows_usb' })}
-                          className={`py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                          className={`py-2 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1 ${
                             printer.tipoConexion === 'windows_usb'
                               ? 'bg-neutral-800 text-white shadow-md border border-neutral-700'
                               : 'text-neutral-400 hover:text-neutral-200'
                           }`}
                         >
-                          <svg className="w-3.5 h-3.5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <svg className="w-3.5 h-3.5 text-blue-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                           </svg>
-                          Cable / Windows
+                          <span className="truncate">Cable</span>
                         </button>
 
                         <button
                           type="button"
                           onClick={() => handleUpdatePrinter(printer.id, { tipoConexion: 'network' })}
-                          className={`py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                          className={`py-2 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1 ${
                             printer.tipoConexion === 'network'
                               ? 'bg-neutral-800 text-white shadow-md border border-neutral-700'
                               : 'text-neutral-400 hover:text-neutral-200'
                           }`}
                         >
-                          <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <svg className="w-3.5 h-3.5 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
                           </svg>
-                          Red (TCP / IP)
+                          <span className="truncate">Red</span>
                         </button>
                       </div>
                     </div>
@@ -613,6 +616,29 @@ function App() {
                             }`}
                           >
                             {rol === 'AMBOS' ? 'Ambos' : rol === 'COCINA' ? 'Cocina' : 'Caja'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Paper width selector */}
+                    <div>
+                      <label className="block text-xs font-semibold text-neutral-400 mb-1.5">
+                        Ancho de Papel
+                      </label>
+                      <div className="grid grid-cols-2 bg-neutral-900 p-1 rounded-xl border border-neutral-750">
+                        {(['80mm', '58mm'] as const).map(ancho => (
+                          <button
+                            key={ancho}
+                            type="button"
+                            onClick={() => handleUpdatePrinter(printer.id, { anchoPapel: ancho })}
+                            className={`py-2 text-xs font-bold rounded-lg transition-all ${
+                              (printer.anchoPapel || '80mm') === ancho
+                                ? 'bg-neutral-800 text-white shadow-md border border-neutral-700'
+                                : 'text-neutral-400 hover:text-neutral-200'
+                            }`}
+                          >
+                            {ancho === '80mm' ? '80 mm' : '58 mm'}
                           </button>
                         ))}
                       </div>
