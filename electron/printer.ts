@@ -167,6 +167,61 @@ function getFinancialTotals(orderData: any) {
   };
 }
 
+function getMedioPagoTexto(orderData: any): string {
+  const tx = orderData.TransaccionPago || {};
+
+  const breb = Array.isArray(tx.DetalleRecaudoBreB)
+    ? tx.DetalleRecaudoBreB[0]
+    : (tx.DetalleRecaudoBreB || tx.detalleBreB);
+
+  const pse = Array.isArray(tx.DetalleRecaudoPse)
+    ? tx.DetalleRecaudoPse[0]
+    : (tx.DetalleRecaudoPse || tx.detallePse);
+
+  const credi = Array.isArray(tx.DetalleRecaudoCredibanco)
+    ? tx.DetalleRecaudoCredibanco[0]
+    : (tx.DetalleRecaudoCredibanco || tx.detalleCredibanco);
+
+  const wompi = Array.isArray(tx.DetalleRecaudoWompi)
+    ? tx.DetalleRecaudoWompi[0]
+    : (tx.DetalleRecaudoWompi || tx.detalleWompi);
+
+  // 1. Kamin: Bre-B
+  if (breb) {
+    return 'BRE-B';
+  }
+
+  // 2. Kamin o Wompi: PSE
+  if (pse) {
+    return 'PSE';
+  }
+
+  // 3. Credibanco: Tarjeta
+  if (credi) {
+    if (credi.franquicia) {
+      return `TARJETA (${String(credi.franquicia).trim().toUpperCase()})`;
+    }
+    return 'TARJETA';
+  }
+
+  // 4. Wompi
+  if (wompi) {
+    const mp = (wompi.metodoPago || '').toUpperCase();
+    if (mp === 'CARD') return 'TARJETA';
+    if (mp === 'PSE') return 'PSE';
+    if (mp === 'BANCOLOMBIA_TRANSFER' || mp === 'NEQUI') return 'NEQUI / BANCOLOMBIA';
+    return mp || 'TARJETA';
+  }
+
+  // 5. Fallback por texto
+  const metodoGeneral = String(tx.metodoPago || '').toUpperCase();
+  if (metodoGeneral.includes('BRE_B') || metodoGeneral.includes('BREB')) return 'BRE-B';
+  if (metodoGeneral.includes('PSE')) return 'PSE';
+  if (metodoGeneral.includes('CARD') || metodoGeneral.includes('TARJETA') || metodoGeneral.includes('CREDI')) return 'TARJETA';
+
+  return 'PAGO EN LINEA';
+}
+
 function formatItemRow(desc: string, cant: string, lineLength = 32): string[] {
   const cantStr = cant.toString();
   const maxDescLen = lineLength - cantStr.length - 1; 
@@ -779,7 +834,7 @@ function generateCustomerInvoiceHtml(orderData: any, printerConfig: ImpresoraCon
 
   <div class="pay-box">
     <div><strong>ESTADO:</strong> PAGADO / APROBADO</div>
-    <div><strong>MEDIO:</strong> PAGO EN LINEA UPICK</div>
+    <div><strong>MEDIO:</strong> ${getMedioPagoTexto(orderData)}</div>
     <div>Ref: #${orderData.id ? orderData.id.slice(-8).toUpperCase() : 'UPICK'}</div>
   </div>
 
@@ -1259,7 +1314,7 @@ async function printCustomerInvoiceViaNetworkEscpos(orderData: any, printerConfi
             .align('ct')
             .text(doubleDivider)
             .text('ESTADO: PAGADO / APROBADO')
-            .text('MEDIO: PAGO EN LINEA UPICK')
+            .text(`MEDIO: ${getMedioPagoTexto(orderData)}`)
             .text(`Ref: #${orderData.id ? orderData.id.slice(-8).toUpperCase() : 'UPICK'}`)
             .feed(1)
             .text('*** GRACIAS POR SU COMPRA ***')
@@ -1542,7 +1597,8 @@ export function printOrderToConsole(orderData: any, motivo?: string) {
   }
   lines.push(separator);
   lines.push(formatLine(`TOTAL PAGADO: ${formatCOP(totales.total)}`));
-  lines.push(formatLine('ESTADO: PAGADO / APROBADO (UPICK ONLINE)'));
+  lines.push(formatLine('ESTADO: PAGADO / APROBADO'));
+  lines.push(formatLine(`MEDIO: ${getMedioPagoTexto(orderData)}`));
   lines.push(border);
   lines.push('');
 
