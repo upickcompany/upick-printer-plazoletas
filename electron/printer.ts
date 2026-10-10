@@ -241,14 +241,20 @@ function getReservaInfo(orderData: any) {
 // IMPRESIÓN POR WINDOWS SPOOLER (CABLE / USB NATIVO)
 // -------------------------------------------------------------
 export async function printViaWindowsSpooler(deviceName: string, htmlContent: string): Promise<boolean> {
+  if (!deviceName) {
+    console.error('❌ [Spooler Windows] Error: No se especificó el dispositivo de impresión.');
+    return false;
+  }
+
   return new Promise((resolve) => {
     let printWin: BrowserWindow | null = new BrowserWindow({
       show: false,
-      width: 320,
-      height: 600,
+      width: 350,
+      height: 800,
       webPreferences: {
         nodeIntegration: false,
-        contextIsolation: true
+        contextIsolation: true,
+        backgroundThrottling: false
       }
     });
 
@@ -265,9 +271,11 @@ export async function printViaWindowsSpooler(deviceName: string, htmlContent: st
       resolve(false);
     }, 15000);
 
-    printWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(htmlContent));
+    let isPrinted = false;
+    const executePrint = () => {
+      if (isPrinted || !printWin || printWin.isDestroyed()) return;
+      isPrinted = true;
 
-    printWin.webContents.on('did-finish-load', () => {
       // Breve espera para que el motor renderice estilos e imágenes base64
       setTimeout(() => {
         if (!printWin || printWin.isDestroyed()) {
@@ -281,18 +289,32 @@ export async function printViaWindowsSpooler(deviceName: string, htmlContent: st
             silent: true,
             printBackground: true,
             deviceName: deviceName,
+            usePrinterDefaultPageSize: true,
             margins: { marginType: 'none' }
           },
           (success, failureReason) => {
             clearTimeout(timer);
             if (!success) {
-              console.error(`Error en spooler de Windows (${deviceName}):`, failureReason);
+              console.error(`❌ Error en spooler de Windows (${deviceName}):`, failureReason);
+              cleanup();
+              resolve(false);
+            } else {
+              console.log(`✅ [Spooler Windows] Documento enviado exitosamente a "${deviceName}".`);
+              // Dejamos 2 segundos para que el spooler de Windows termine de transmitir el raster a la impresora
+              setTimeout(() => {
+                cleanup();
+              }, 2000);
+              resolve(true);
             }
-            cleanup();
-            resolve(success);
           }
         );
-      }, 350);
+      }, 450);
+    };
+
+    printWin.once('ready-to-show', executePrint);
+
+    printWin.webContents.on('did-finish-load', () => {
+      setTimeout(executePrint, 400);
     });
 
     printWin.webContents.on('did-fail-load', (err) => {
@@ -301,6 +323,8 @@ export async function printViaWindowsSpooler(deviceName: string, htmlContent: st
       cleanup();
       resolve(false);
     });
+
+    printWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(htmlContent));
   });
 }
 
@@ -384,21 +408,22 @@ function generateReceiptHtml(orderData: any, printerConfig: ImpresoraConfig): st
   }
   @page {
     margin: 0;
-    size: ${is58mm ? '58mm auto' : '80mm auto'};
   }
   body {
     margin: 0;
     padding: ${bodyPadding};
     width: ${bodyWidth};
-    max-width: ${bodyWidth};
+    max-width: 100%;
     font-family: 'Courier New', Courier, monospace, sans-serif;
     font-size: ${fontSize};
     line-height: 1.25;
-    color: #000;
-    background: #fff;
+    color: #000 !important;
+    background: #fff !important;
     font-weight: 500;
     word-wrap: break-word;
-    overflow: hidden;
+    overflow: visible !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
   .center { text-align: center; }
   .right { text-align: right; }
@@ -604,20 +629,22 @@ function generateCustomerInvoiceHtml(orderData: any, printerConfig: ImpresoraCon
 <meta charset="utf-8">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  @page { margin: 0; size: ${is58mm ? '58mm auto' : '80mm auto'}; }
+  @page { margin: 0; }
   body {
     margin: 0;
     padding: ${bodyPadding};
     width: ${bodyWidth};
-    max-width: ${bodyWidth};
+    max-width: 100%;
     font-family: 'Courier New', Courier, monospace, sans-serif;
     font-size: ${fontSize};
     line-height: 1.25;
-    color: #000;
-    background: #fff;
+    color: #000 !important;
+    background: #fff !important;
     font-weight: normal;
     word-wrap: break-word;
-    overflow: hidden;
+    overflow: visible !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
   .center { text-align: center; }
   .right { text-align: right; }
@@ -1613,16 +1640,20 @@ export async function testPrinter(config: any): Promise<boolean> {
   }
   @page {
     margin: 0;
-    size: ${is58mm ? '58mm auto' : '80mm auto'};
   }
   body {
     font-family: 'Courier New', Courier, monospace;
     text-align: center;
     padding: 10px 4px 18px 4px;
     width: ${bodyWidth};
-    max-width: ${bodyWidth};
+    max-width: 100%;
     font-size: ${is58mm ? '11px' : '12px'};
-    color: #000;
+    color: #000 !important;
+    background: #fff !important;
+    word-wrap: break-word;
+    overflow: visible !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
   h2 { font-size: ${is58mm ? '14px' : '16px'}; margin: 0 0 6px 0; }
   p { font-size: ${is58mm ? '11px' : '12px'}; margin: 3px 0; }
