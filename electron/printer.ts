@@ -39,6 +39,134 @@ function formatBogotaDate(dateStr: string): string {
   return `${day}/${month}/${year}, ${hoursStr}:${minutes} ${ampm}`;
 }
 
+function formatCOP(amount: number | null | undefined): string {
+  if (amount === null || amount === undefined || isNaN(Number(amount))) return '$ 0';
+  return '$ ' + Math.round(Number(amount)).toLocaleString('es-CO');
+}
+
+function formatPriceRow(desc: string, priceStr: string, lineLength = 32): string[] {
+  const cleanPrice = removeAccents(priceStr);
+  const maxDescLen = lineLength - cleanPrice.length - 1; 
+  let lines: string[] = [];
+  let currentDesc = desc;
+  
+  let firstLineText = currentDesc;
+  if (firstLineText.length > maxDescLen) {
+    let splitAt = firstLineText.lastIndexOf(' ', maxDescLen);
+    if (splitAt === -1 || splitAt === 0) splitAt = maxDescLen;
+    firstLineText = firstLineText.substring(0, splitAt);
+    currentDesc = currentDesc.substring(splitAt).trim();
+  } else {
+    currentDesc = '';
+  }
+  
+  const spaces = lineLength - firstLineText.length - cleanPrice.length;
+  lines.push(firstLineText + ' '.repeat(Math.max(0, spaces)) + cleanPrice);
+  
+  while (currentDesc.length > 0) {
+    if (currentDesc.length > lineLength) {
+      let splitAt = currentDesc.lastIndexOf(' ', lineLength);
+      if (splitAt === -1 || splitAt === 0) splitAt = lineLength;
+      lines.push(currentDesc.substring(0, splitAt));
+      currentDesc = currentDesc.substring(splitAt).trim();
+    } else {
+      lines.push(currentDesc);
+      currentDesc = '';
+    }
+  }
+  
+  return lines;
+}
+
+function getRestauranteFiscalInfo(orderData: any) {
+  const rest = orderData.Restaurante || {};
+  const liq = (typeof rest.datosLiquidacion === 'object' && rest.datosLiquidacion !== null) ? rest.datosLiquidacion : {};
+
+  const nombreComercial = rest.nombreSucursal || 'Restaurante';
+  const razonSocial = liq.razonSocial || liq.titular || liq.nombreTitular || '';
+  const nit = liq.nit || liq.numeroDocumento || liq.documento || '';
+  const regimen = liq.regimen || liq.responsabilidadTributaria || 'No responsable de IVA';
+  const direccion = liq.direccion || '';
+  const telefono = liq.telefono || '';
+
+  const plazoletaNombre = rest.Plazoleta?.nombre || '';
+  const lugarNombre = rest.Plazoleta?.Lugar?.nombre || '';
+  const ciudadNombre = rest.Plazoleta?.Lugar?.Ciudad?.nombre || '';
+
+  let ubicacionTexto = '';
+  if (plazoletaNombre && lugarNombre) {
+    ubicacionTexto = `${plazoletaNombre} - ${lugarNombre}`;
+  } else if (plazoletaNombre || lugarNombre) {
+    ubicacionTexto = plazoletaNombre || lugarNombre;
+  }
+  if (ciudadNombre) {
+    ubicacionTexto = ubicacionTexto ? `${ubicacionTexto}, ${ciudadNombre}` : ciudadNombre;
+  }
+
+  return {
+    nombreComercial,
+    razonSocial,
+    nit,
+    regimen,
+    direccion,
+    telefono,
+    ubicacionTexto
+  };
+}
+
+function getClienteInvoiceInfo(orderData: any) {
+  const tx = orderData.TransaccionPago || {};
+  let nombreCliente = tx.nombreCliente || 'Cliente';
+  let documentoCliente = '222222222222 (Consumidor Final)';
+  let emailCliente = '';
+  let telefonoCliente = tx.telefonoCliente ? `Tel: ${tx.telefonoCliente}` : '';
+
+  if (tx.documentoFacturacion) {
+    const tipoDoc = tx.tipoDocumentoFacturacion || 'CC';
+    documentoCliente = `${tipoDoc} ${tx.documentoFacturacion}`;
+    if (tx.nombreFacturacion) {
+      nombreCliente = tx.nombreFacturacion;
+    }
+    if (tx.emailFacturacion) {
+      emailCliente = tx.emailFacturacion;
+    }
+  }
+
+  let tipoPedidoTexto = '';
+  if (tx.tipoPedido === 'ENTREGA_MESA') {
+    tipoPedidoTexto = `ENTREGAR EN: ${tx.ubicacionEntregaTexto || 'Mesa no especificada'}`;
+  } else if (tx.tipoPedido === 'RECOGIDA') {
+    tipoPedidoTexto = 'PARA LLEVAR / RECOGER';
+  }
+
+  return {
+    nombreCliente,
+    documentoCliente,
+    emailCliente,
+    telefonoCliente,
+    tipoPedidoTexto
+  };
+}
+
+function getFinancialTotals(orderData: any) {
+  const subtotal = Number(orderData.subtotalRestaurante || 0);
+  const descuento = Number(orderData.montoDescuentoCupon || 0);
+  const cuponCodigo = orderData.cuponCodigo || '';
+  const feeServicio = Number(orderData.montoFeeServicio || 0);
+  const propina = Number(orderData.montoPropina || 0);
+  
+  const total = Math.max(0, subtotal - descuento + feeServicio + propina);
+
+  return {
+    subtotal,
+    descuento,
+    cuponCodigo,
+    feeServicio,
+    propina,
+    total
+  };
+}
+
 function formatItemRow(desc: string, cant: string, lineLength = 32): string[] {
   const cantStr = cant.toString();
   const maxDescLen = lineLength - cantStr.length - 1; 
@@ -411,6 +539,229 @@ function generateReceiptHtml(orderData: any, printerConfig: ImpresoraConfig): st
 }
 
 // -------------------------------------------------------------
+// GENERADOR DE FACTURA FORMAL PARA EL CLIENTE (HTML / SPOOLER WINDOWS)
+// -------------------------------------------------------------
+function generateCustomerInvoiceHtml(orderData: any, printerConfig: ImpresoraConfig): string {
+  const is58mm = printerConfig.anchoPapel === '58mm';
+  const bodyWidth = is58mm ? '48mm' : '66mm';
+  const bodyPadding = is58mm ? '4px 3px 20px 3px' : '4px 4px 24px 4px';
+  const fontSize = is58mm ? '11px' : '12px';
+  const qtyWidth = is58mm ? '24px' : '30px';
+  const priceWidth = is58mm ? '60px' : '75px';
+
+  const fiscal = getRestauranteFiscalInfo(orderData);
+  const cliente = getClienteInvoiceInfo(orderData);
+  const totales = getFinancialTotals(orderData);
+  const fechaStr = orderData.createdAt ? formatBogotaDate(orderData.createdAt) : '';
+
+  let codigoTicket = 'N/A';
+  if (orderData.TransaccionPago?.id) {
+    codigoTicket = orderData.TransaccionPago.id.slice(-6).toUpperCase();
+  } else if (orderData.id) {
+    codigoTicket = orderData.id.slice(-6).toUpperCase();
+  }
+
+  let itemsHtml = '';
+  let totalItems = 0;
+
+  if (orderData.DetallePedido && orderData.DetallePedido.length > 0) {
+    orderData.DetallePedido.forEach((item: any) => {
+      const cant = item.cantidad || 1;
+      totalItems += cant;
+      const desc = item.ProductoMenu?.nombre || 'Producto';
+      const unitPrice = Number(item.precioUnitarioCobrado || 0);
+      const lineTotal = cant * unitPrice;
+
+      let extrasHtml = '';
+      if (item.notas) {
+        extrasHtml += `<div class="item-extra">Nota: ${item.notas}</div>`;
+      }
+      if (item.EleccionAdicional && item.EleccionAdicional.length > 0) {
+        item.EleccionAdicional.forEach((eleccion: any) => {
+          const precioExtra = Number(eleccion.precioCobrado || 0);
+          const precioExtraStr = precioExtra > 0 ? ` (+${formatCOP(precioExtra)})` : '';
+          extrasHtml += `<div class="item-extra">+ ${eleccion.nombreOpcion}${precioExtraStr}</div>`;
+        });
+      }
+
+      itemsHtml += `
+        <div class="item-row">
+          <div class="item-qty">${cant}</div>
+          <div class="item-desc">
+            <div>${desc}</div>
+            ${extrasHtml}
+          </div>
+          <div class="item-price">${formatCOP(lineTotal)}</div>
+        </div>
+      `;
+    });
+  }
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  @page { margin: 0; size: ${is58mm ? '58mm auto' : '80mm auto'}; }
+  body {
+    margin: 0;
+    padding: ${bodyPadding};
+    width: ${bodyWidth};
+    max-width: ${bodyWidth};
+    font-family: 'Courier New', Courier, monospace, sans-serif;
+    font-size: ${fontSize};
+    line-height: 1.25;
+    color: #000;
+    background: #fff;
+    font-weight: 700;
+    word-wrap: break-word;
+    overflow: hidden;
+  }
+  .center { text-align: center; }
+  .right { text-align: right; }
+  .title { font-size: ${is58mm ? '16px' : '20px'}; font-weight: 900; line-height: 1.1; margin: 2px 0; }
+  .brand { font-size: ${is58mm ? '13px' : '15px'}; font-weight: 900; margin-bottom: 2px; }
+  .badge-invoice {
+    border: 2px solid #000;
+    padding: 3px 6px;
+    font-size: ${is58mm ? '11px' : '13px'};
+    font-weight: 900;
+    margin: 4px auto;
+    display: inline-block;
+  }
+  .divider { border-top: 1px dashed #000; margin: 5px 0; }
+  .fiscal-info { font-size: ${is58mm ? '10px' : '11px'}; margin: 1px 0; line-height: 1.2; }
+  .client-box { font-size: ${is58mm ? '10px' : '11.5px'}; margin: 4px 0; line-height: 1.25; }
+  .table-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px dashed #000;
+    border-bottom: 1px dashed #000;
+    padding: 3px 0;
+    font-weight: 900;
+    margin-top: 4px;
+    font-size: ${fontSize};
+  }
+  .th-qty { width: ${qtyWidth}; }
+  .th-desc { flex: 1; padding: 0 4px; }
+  .th-price { width: ${priceWidth}; text-align: right; }
+  .item-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-top: 4px;
+    font-size: ${fontSize};
+  }
+  .item-qty { width: ${qtyWidth}; font-weight: 900; }
+  .item-desc { flex: 1; padding: 0 4px; word-break: break-word; }
+  .item-price { width: ${priceWidth}; text-align: right; font-weight: 900; white-space: nowrap; }
+  .item-extra { font-size: ${is58mm ? '9.5px' : '10.5px'}; color: #222; margin-top: 1px; }
+  .totals-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 2px 0;
+    font-size: ${fontSize};
+  }
+  .total-highlight {
+    font-size: ${is58mm ? '14px' : '17px'};
+    font-weight: 900;
+    border-top: 1px dashed #000;
+    border-bottom: 1px dashed #000;
+    padding: 4px 0;
+    margin-top: 4px;
+  }
+  .pay-box {
+    border: 1px dashed #000;
+    padding: 4px;
+    margin: 6px 0;
+    font-size: ${is58mm ? '10px' : '11px'};
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+  <div class="center">
+    <div class="badge-invoice">COMPROBANTE DE VENTA</div>
+    <div class="brand">${fiscal.nombreComercial}</div>
+    ${fiscal.razonSocial ? `<div class="fiscal-info">${fiscal.razonSocial}</div>` : ''}
+    ${fiscal.nit ? `<div class="fiscal-info">NIT: ${fiscal.nit}</div>` : ''}
+    <div class="fiscal-info">${fiscal.regimen}</div>
+    ${fiscal.ubicacionTexto ? `<div class="fiscal-info">${fiscal.ubicacionTexto}</div>` : ''}
+    ${fiscal.telefono ? `<div class="fiscal-info">Tel: ${fiscal.telefono}</div>` : ''}
+    <div style="font-size: ${is58mm ? '13px' : '15px'}; font-weight: 900; margin-top: 4px;">Pedido UPick #${codigoTicket}</div>
+    ${fechaStr ? `<div style="font-size: ${is58mm ? '10px' : '11px'};">${fechaStr}</div>` : ''}
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="client-box">
+    <div><strong>Cliente:</strong> ${cliente.nombreCliente}</div>
+    <div><strong>Doc/NIT:</strong> ${cliente.documentoCliente}</div>
+    ${cliente.telefonoCliente ? `<div><strong>Tel:</strong> ${cliente.telefonoCliente}</div>` : ''}
+    ${cliente.emailCliente ? `<div><strong>Email:</strong> ${cliente.emailCliente}</div>` : ''}
+    ${cliente.tipoPedidoTexto ? `<div style="font-weight: 900; margin-top: 2px;">${cliente.tipoPedidoTexto}</div>` : ''}
+  </div>
+
+  <div class="table-header">
+    <div class="th-qty">CANT</div>
+    <div class="th-desc">DESCRIPCION</div>
+    <div class="th-price">TOTAL</div>
+  </div>
+
+  ${itemsHtml}
+
+  <div class="divider"></div>
+
+  <div class="totals-row">
+    <div>Subtotal Alimentos:</div>
+    <div>${formatCOP(totales.subtotal)}</div>
+  </div>
+
+  ${totales.descuento > 0 ? `
+    <div class="totals-row">
+      <div>Descuento ${totales.cuponCodigo ? `(${totales.cuponCodigo})` : ''}:</div>
+      <div>-${formatCOP(totales.descuento)}</div>
+    </div>
+  ` : ''}
+
+  ${totales.feeServicio > 0 ? `
+    <div class="totals-row">
+      <div>Tarifa Servicio:</div>
+      <div>${formatCOP(totales.feeServicio)}</div>
+    </div>
+  ` : ''}
+
+  ${totales.propina > 0 ? `
+    <div class="totals-row">
+      <div>Propina Voluntaria:</div>
+      <div>${formatCOP(totales.propina)}</div>
+    </div>
+  ` : ''}
+
+  <div class="totals-row total-highlight">
+    <div>TOTAL PAGADO:</div>
+    <div>${formatCOP(totales.total)}</div>
+  </div>
+
+  <div class="pay-box">
+    <div><strong>ESTADO:</strong> PAGADO / APROBADO</div>
+    <div><strong>MEDIO:</strong> PAGO EN LINEA UPICK</div>
+    <div>Ref: #${orderData.id ? orderData.id.slice(-8).toUpperCase() : 'UPICK'}</div>
+  </div>
+
+  <div class="center" style="font-size: ${is58mm ? '10px' : '11px'}; margin-top: 6px;">
+    <div>*** GRACIAS POR SU COMPRA ***</div>
+    <div>Conserve este comprobante</div>
+    <div style="font-size: 9.5px; margin-top: 2px; color: #333;">Plataforma UPick Plazoletas</div>
+  </div>
+</body>
+</html>`;
+}
+
+// -------------------------------------------------------------
 // IMPRESIÓN POR RED (TCP RAW SOCKET ESC/POS)
 // -------------------------------------------------------------
 async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraConfig): Promise<boolean> {
@@ -626,6 +977,233 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
 }
 
 // -------------------------------------------------------------
+// IMPRESIÓN DE FACTURA FORMAL POR RED (TCP RAW SOCKET ESC/POS)
+// -------------------------------------------------------------
+async function printCustomerInvoiceViaNetworkEscpos(orderData: any, printerConfig: ImpresoraConfig): Promise<boolean> {
+  const ip = printerConfig.ip;
+  const port = printerConfig.port || 9100;
+
+  if (!ip) {
+    console.error(`[${printerConfig.nombre}] No hay IP configurada para impresión de factura en red.`);
+    return false;
+  }
+
+  return new Promise((resolve) => {
+    try {
+      const device = new escpos.Network(ip, port);
+
+      device.close = function (cb: any) {
+        if (this.device) {
+          this.device.end();
+          setTimeout(() => {
+            if (this.device) {
+              this.device.destroy();
+              this.device = null;
+            }
+            if (cb) cb(null, this.device);
+          }, 500);
+        } else {
+          if (cb) cb(null, this.device);
+        }
+        return this;
+      };
+
+      const options = { encoding: "GB18030" };
+      const printer = new escpos.Printer(device, options);
+
+      let isDone = false;
+      const timeoutTimer = setTimeout(() => {
+        if (!isDone) {
+          isDone = true;
+          console.error(`Timeout (6s) imprimiendo factura de red (${ip}:${port})`);
+          try { device.close(); } catch (_) {}
+          resolve(false);
+        }
+      }, 6000);
+
+      device.open((error: any) => {
+        if (error) {
+          clearTimeout(timeoutTimer);
+          if (isDone) return;
+          isDone = true;
+          console.error(`Error conectando a impresora para factura (${ip}:${port}):`, error);
+          resolve(false);
+          return;
+        }
+
+        try {
+          const fiscal = getRestauranteFiscalInfo(orderData);
+          const cliente = getClienteInvoiceInfo(orderData);
+          const totales = getFinancialTotals(orderData);
+          const fechaStr = orderData.createdAt ? formatBogotaDate(orderData.createdAt) : '';
+
+          let codigoTicket = 'N/A';
+          if (orderData.TransaccionPago?.id) {
+            codigoTicket = orderData.TransaccionPago.id.slice(-6).toUpperCase();
+          } else if (orderData.id) {
+            codigoTicket = orderData.id.slice(-6).toUpperCase();
+          }
+
+          const is58mm = printerConfig.anchoPapel === '58mm';
+          const lineLength = is58mm ? 32 : 42;
+          const dividerLine = '-'.repeat(lineLength);
+          const doubleDivider = '='.repeat(lineLength);
+
+          // 1. ENCABEZADO FISCAL
+          printer
+            .font('b')
+            .align('ct')
+            .style('b')
+            .text('COMPROBANTE DE VENTA')
+            .size(2, 2)
+            .text('UPick')
+            .size(1, 1)
+            .text(removeAccents(fiscal.nombreComercial));
+
+          if (fiscal.razonSocial) {
+            printer.text(removeAccents(fiscal.razonSocial));
+          }
+          if (fiscal.nit) {
+            printer.text(`NIT: ${removeAccents(fiscal.nit)}`);
+          }
+          if (fiscal.regimen) {
+            printer.text(removeAccents(fiscal.regimen));
+          }
+          if (fiscal.ubicacionTexto) {
+            printer.text(removeAccents(fiscal.ubicacionTexto));
+          }
+          if (fiscal.telefono) {
+            printer.text(`Tel: ${removeAccents(fiscal.telefono)}`);
+          }
+
+          printer
+            .style('normal')
+            .text(`Pedido UPick #${codigoTicket}`);
+
+          if (fechaStr) {
+            printer.text(fechaStr);
+          }
+
+          // 2. DATOS DEL CLIENTE
+          printer
+            .align('ct')
+            .text(dividerLine)
+            .align('lt')
+            .text(`Cliente: ${removeAccents(cliente.nombreCliente)}`)
+            .text(`Doc/NIT: ${removeAccents(cliente.documentoCliente)}`);
+
+          if (cliente.telefonoCliente) {
+            printer.text(removeAccents(cliente.telefonoCliente));
+          }
+          if (cliente.emailCliente) {
+            printer.text(removeAccents(cliente.emailCliente));
+          }
+          if (cliente.tipoPedidoTexto) {
+            printer.text(removeAccents(cliente.tipoPedidoTexto));
+          }
+
+          // 3. TABLA DE ÍTEMS Y PRECIOS
+          printer
+            .align('ct')
+            .text(dividerLine)
+            .align('lt');
+
+          const headerDesc = 'CANT / DESCRIPCION';
+          const headerPrice = 'TOTAL';
+          const spacesH = lineLength - headerDesc.length - headerPrice.length;
+          printer.text(headerDesc + ' '.repeat(Math.max(0, spacesH)) + headerPrice);
+          printer.text(dividerLine);
+
+          if (orderData.DetallePedido && orderData.DetallePedido.length > 0) {
+            orderData.DetallePedido.forEach((item: any) => {
+              const cantNum = item.cantidad || 1;
+              const desc = removeAccents(item.ProductoMenu?.nombre || 'Producto');
+              const unitPrice = Number(item.precioUnitarioCobrado || 0);
+              const lineTotal = cantNum * unitPrice;
+
+              const itemRows = formatPriceRow(`${cantNum}x ${desc}`, formatCOP(lineTotal), lineLength);
+              itemRows.forEach(row => printer.text(row));
+
+              if (item.notas) {
+                printer.text(`   Nota: ${removeAccents(item.notas)}`);
+              }
+
+              if (item.EleccionAdicional && item.EleccionAdicional.length > 0) {
+                item.EleccionAdicional.forEach((eleccion: any) => {
+                  const pExtra = Number(eleccion.precioCobrado || 0);
+                  const extraPriceStr = pExtra > 0 ? ` (+${formatCOP(pExtra)})` : '';
+                  printer.text(`   + ${removeAccents(eleccion.nombreOpcion)}${extraPriceStr}`);
+                });
+              }
+            });
+          }
+
+          // 4. TOTALES FINANCIEROS
+          printer
+            .text(dividerLine)
+            .align('lt');
+
+          const subtotalRows = formatPriceRow('Subtotal Alimentos:', formatCOP(totales.subtotal), lineLength);
+          subtotalRows.forEach(row => printer.text(row));
+
+          if (totales.descuento > 0) {
+            const descLabel = `Descuento ${totales.cuponCodigo ? `(${totales.cuponCodigo})` : ''}:`;
+            const descRows = formatPriceRow(descLabel, `-${formatCOP(totales.descuento)}`, lineLength);
+            descRows.forEach(row => printer.text(row));
+          }
+
+          if (totales.feeServicio > 0) {
+            const feeRows = formatPriceRow('Tarifa Servicio:', formatCOP(totales.feeServicio), lineLength);
+            feeRows.forEach(row => printer.text(row));
+          }
+
+          if (totales.propina > 0) {
+            const tipRows = formatPriceRow('Propina Voluntaria:', formatCOP(totales.propina), lineLength);
+            tipRows.forEach(row => printer.text(row));
+          }
+
+          printer
+            .text(doubleDivider)
+            .style('b');
+
+          const totalRows = formatPriceRow('TOTAL PAGADO:', formatCOP(totales.total), lineLength);
+          totalRows.forEach(row => printer.text(row));
+
+          printer
+            .style('normal')
+            .text(doubleDivider)
+            .align('ct')
+            .text('ESTADO: PAGADO / APROBADO')
+            .text('MEDIO: PAGO EN LINEA UPICK')
+            .text(`Ref: #${orderData.id ? orderData.id.slice(-8).toUpperCase() : 'UPICK'}`)
+            .feed(1)
+            .text('*** GRACIAS POR SU COMPRA ***')
+            .text('Conserve este comprobante')
+            .text('Plataforma UPick Plazoletas')
+            .feed(3)
+            .cut();
+
+          isDone = true;
+          clearTimeout(timeoutTimer);
+          printer.close((closeErr: any) => {
+            if (closeErr) console.error('Error al cerrar la impresora tras factura:', closeErr);
+            resolve(true);
+          });
+        } catch (printError) {
+          clearTimeout(timeoutTimer);
+          console.error('Error en comandos de factura ESC/POS:', printError);
+          device.close();
+          resolve(false);
+        }
+      });
+    } catch (err) {
+      console.error('Error crítico en socket de red para factura:', err);
+      resolve(false);
+    }
+  });
+}
+
+// -------------------------------------------------------------
 // COLA SECUENCIAL POR IMPRESORA (MUTEX ANTI-BLOQUEO)
 // -------------------------------------------------------------
 // Las impresoras térmicas solo admiten 1 conexión socket/driver a la vez.
@@ -667,15 +1245,56 @@ async function printSingleOrder(orderData: any, printerConfig: ImpresoraConfig):
     : `net:${printerConfig.ip}:${printerConfig.port || 9100}`;
 
   return await enqueuePrintJob(printerKey, async () => {
+    const rol = printerConfig.rolCopia || 'AMBOS';
+    let overallSuccess = true;
+
     if (printerConfig.tipoConexion === 'windows_usb') {
       if (!printerConfig.deviceName) {
         console.error(`[${printerConfig.nombre}] No tiene dispositivo de Windows seleccionado.`);
         return false;
       }
-      const html = generateReceiptHtml(orderData, printerConfig);
-      return await printViaWindowsSpooler(printerConfig.deviceName, html);
+
+      // 1. Si el rol es COCINA o AMBOS -> Imprimir comanda de cocina
+      if (rol === 'COCINA' || rol === 'AMBOS') {
+        console.log(`[${printerConfig.nombre}] Imprimiendo COMANDA DE COCINA (USB)...`);
+        const htmlComanda = generateReceiptHtml(orderData, printerConfig);
+        const okComanda = await printViaWindowsSpooler(printerConfig.deviceName, htmlComanda);
+        if (!okComanda) overallSuccess = false;
+      }
+
+      // Pausa técnica entre documentos si se imprimen ambos en la misma máquina
+      if (rol === 'AMBOS') {
+        await new Promise((r) => setTimeout(r, 600));
+      }
+
+      // 2. Si el rol es CAJA o AMBOS -> Imprimir factura de cliente
+      if (rol === 'CAJA' || rol === 'AMBOS') {
+        console.log(`[${printerConfig.nombre}] Imprimiendo FACTURA DE CLIENTE (USB)...`);
+        const htmlFactura = generateCustomerInvoiceHtml(orderData, printerConfig);
+        const okFactura = await printViaWindowsSpooler(printerConfig.deviceName, htmlFactura);
+        if (!okFactura) overallSuccess = false;
+      }
+
+      return overallSuccess;
     } else {
-      return await printViaNetworkEscpos(orderData, printerConfig);
+      // Impresión por Red TCP ESC/POS
+      if (rol === 'COCINA' || rol === 'AMBOS') {
+        console.log(`[${printerConfig.nombre}] Imprimiendo COMANDA DE COCINA (RED)...`);
+        const okComanda = await printViaNetworkEscpos(orderData, printerConfig);
+        if (!okComanda) overallSuccess = false;
+      }
+
+      if (rol === 'AMBOS') {
+        await new Promise((r) => setTimeout(r, 600));
+      }
+
+      if (rol === 'CAJA' || rol === 'AMBOS') {
+        console.log(`[${printerConfig.nombre}] Imprimiendo FACTURA DE CLIENTE (RED)...`);
+        const okFactura = await printCustomerInvoiceViaNetworkEscpos(orderData, printerConfig);
+        if (!okFactura) overallSuccess = false;
+      }
+
+      return overallSuccess;
     }
   });
 }
@@ -781,6 +1400,65 @@ export function printOrderToConsole(orderData: any, motivo?: string) {
   lines.push(formatLine(`Total articulos: ${totalItems}`));
   lines.push(formatLine(`QR URL: https://plazoletas.upickcol.com/qrc/pedido/${orderData.id}`));
   lines.push(border);
+
+  // -----------------------------------------------------------
+  // VISTA PREVIA DE FACTURA FORMAL PARA CLIENTE
+  // -----------------------------------------------------------
+  const fiscal = getRestauranteFiscalInfo(orderData);
+  const cliente = getClienteInvoiceInfo(orderData);
+  const totales = getFinancialTotals(orderData);
+
+  lines.push('');
+  lines.push(border);
+  lines.push(centerLine('COMPROBANTE / FACTURA CLIENTE (TERMINAL)'));
+  lines.push(separator);
+  lines.push(formatLine(`UPick - ${fiscal.nombreComercial}`));
+  if (fiscal.razonSocial) lines.push(formatLine(`Razon Social: ${fiscal.razonSocial}`));
+  if (fiscal.nit) lines.push(formatLine(`NIT: ${fiscal.nit}`));
+  if (fiscal.regimen) lines.push(formatLine(`Regimen: ${fiscal.regimen}`));
+  if (fiscal.ubicacionTexto) lines.push(formatLine(`Ubicacion: ${fiscal.ubicacionTexto}`));
+  lines.push(formatLine(`Pedido #${codigoTicket} | ${fechaStr}`));
+  lines.push(subSep);
+  lines.push(formatLine(`Cliente: ${cliente.nombreCliente}`));
+  lines.push(formatLine(`Doc/NIT: ${cliente.documentoCliente}`));
+  if (cliente.telefonoCliente) lines.push(formatLine(cliente.telefonoCliente));
+  if (cliente.emailCliente) lines.push(formatLine(`Email: ${cliente.emailCliente}`));
+  if (cliente.tipoPedidoTexto) lines.push(formatLine(cliente.tipoPedidoTexto));
+  lines.push(separator);
+  lines.push(formatLine('DETALLE DE PRODUCTOS:'));
+
+  if (orderData.DetallePedido && orderData.DetallePedido.length > 0) {
+    orderData.DetallePedido.forEach((item: any) => {
+      const cant = item.cantidad || 1;
+      const desc = item.ProductoMenu?.nombre || 'Producto';
+      const unitPrice = Number(item.precioUnitarioCobrado || 0);
+      const lineTotal = cant * unitPrice;
+      lines.push(formatLine(`  * ${cant}x ${desc} -> ${formatCOP(lineTotal)}`));
+      if (item.EleccionAdicional && item.EleccionAdicional.length > 0) {
+        item.EleccionAdicional.forEach((el: any) => {
+          const pExtra = Number(el.precioCobrado || 0);
+          const extraStr = pExtra > 0 ? ` (+${formatCOP(pExtra)})` : '';
+          lines.push(formatLine(`     + ${el.nombreOpcion}${extraStr}`));
+        });
+      }
+    });
+  }
+
+  lines.push(subSep);
+  lines.push(formatLine(`Subtotal Alimentos: ${formatCOP(totales.subtotal)}`));
+  if (totales.descuento > 0) {
+    lines.push(formatLine(`Descuento ${totales.cuponCodigo ? `(${totales.cuponCodigo})` : ''}: -${formatCOP(totales.descuento)}`));
+  }
+  if (totales.feeServicio > 0) {
+    lines.push(formatLine(`Tarifa Servicio: ${formatCOP(totales.feeServicio)}`));
+  }
+  if (totales.propina > 0) {
+    lines.push(formatLine(`Propina Voluntaria: ${formatCOP(totales.propina)}`));
+  }
+  lines.push(separator);
+  lines.push(formatLine(`TOTAL PAGADO: ${formatCOP(totales.total)}`));
+  lines.push(formatLine('ESTADO: PAGADO / APROBADO (UPICK ONLINE)'));
+  lines.push(border);
   lines.push('');
 
   console.log(lines.join('\n'));
@@ -861,6 +1539,10 @@ export async function testPrinter(config: any): Promise<boolean> {
 
       const is58mm = config.anchoPapel === '58mm';
       const bodyWidth = is58mm ? '48mm' : '66mm';
+      const rolDesc = config.rolCopia === 'COCINA' 
+        ? 'Solo Cocina (Comanda)' 
+        : (config.rolCopia === 'CAJA' ? 'Solo Caja (Factura Cliente)' : 'Ambos (Comanda + Factura)');
+
       const testHtml = `<!DOCTYPE html>
 <html>
 <head>
@@ -893,7 +1575,7 @@ export async function testPrinter(config: any): Promise<boolean> {
   <p><strong>UPick Printer Plazoletas</strong></p>
   <p>Impresora: ${config.nombre || deviceName}</p>
   <p>Dispositivo: ${deviceName}</p>
-  <p>Rol: ${config.rolCopia || 'AMBOS'}</p>
+  <p>Rol: ${rolDesc}</p>
   <p>Papel: ${is58mm ? '58 mm (Mini)' : '80 mm (Estándar)'}</p>
   <p>--------------------------------</p>
   <p>¡Conexión USB/Windows Exitosa!</p>
@@ -911,6 +1593,10 @@ export async function testPrinter(config: any): Promise<boolean> {
         console.error('No hay IP configurada para la prueba de red.');
         return false;
       }
+
+      const rolDesc = config.rolCopia === 'COCINA' 
+        ? 'Solo Cocina (Comanda)' 
+        : (config.rolCopia === 'CAJA' ? 'Solo Caja (Factura Cliente)' : 'Ambos (Comanda + Factura)');
 
       return new Promise<boolean>((resolve) => {
         try {
@@ -957,12 +1643,12 @@ export async function testPrinter(config: any): Promise<boolean> {
               printer
                 .align('ct')
                 .style('b')
-                .text('Prueba de Conexión Exitosa')
+                .text('Prueba de Conexion Exitosa')
                 .style('normal')
                 .text('UPick Printer Plazoletas')
                 .text(`Impresora: ${config.nombre || 'Red'}`)
                 .text(`IP: ${ip}:${port}`)
-                .text(`Rol: ${config.rolCopia || 'AMBOS'}`)
+                .text(`Rol: ${rolDesc}`)
                 .feed(3)
                 .cut()
                 .close(() => {

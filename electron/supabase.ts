@@ -81,15 +81,35 @@ async function handleOrder(orderId: string) {
           telefonoCliente,
           tipoPedido,
           ubicacionEntregaTexto,
-          estadoPago
+          estadoPago,
+          montoTotal,
+          montoPropina,
+          montoDescuentosCupones,
+          solicitaFacturaElectronica,
+          tipoDocumentoFacturacion,
+          documentoFacturacion,
+          nombreFacturacion,
+          emailFacturacion
         ),
         DetallePedido (
           cantidad,
           notas,
+          precioUnitarioCobrado,
           ProductoMenu ( nombre ),
-          EleccionAdicional ( nombreOpcion )
+          EleccionAdicional ( nombreOpcion, precioCobrado )
         ),
-        Restaurante ( nombreSucursal, tiempoPaseComandaMinutos )
+        Restaurante (
+          nombreSucursal,
+          tiempoPaseComandaMinutos,
+          datosLiquidacion,
+          Plazoleta (
+            nombre,
+            Lugar (
+              nombre,
+              Ciudad ( nombre )
+            )
+          )
+        )
       `)
       .eq('id', orderId)
       .single();

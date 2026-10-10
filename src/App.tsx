@@ -600,25 +600,37 @@ function App() {
 
                     {/* Role selector */}
                     <div>
-                      <label className="block text-xs font-semibold text-neutral-400 mb-1.5">
-                        Rol de la Comanda
+                      <label className="block text-xs font-semibold text-neutral-400 mb-1.5 flex items-center justify-between">
+                        <span>Documentos a Imprimir</span>
+                        <span className="text-[10px] text-neutral-400 font-medium">
+                          {printer.rolCopia === 'COCINA' 
+                            ? 'Solo Cocina' 
+                            : printer.rolCopia === 'CAJA' 
+                              ? 'Solo Factura Cliente' 
+                              : 'Comanda + Factura'}
+                        </span>
                       </label>
-                      <div className="grid grid-cols-3 bg-neutral-900 p-1 rounded-xl border border-neutral-750">
-                        {(['AMBOS', 'COCINA', 'CAJA'] as const).map(rol => (
+                      <div className="grid grid-cols-3 bg-neutral-900 p-1 rounded-xl border border-neutral-750 gap-1">
+                        {(['COCINA', 'CAJA', 'AMBOS'] as const).map(rol => (
                           <button
                             key={rol}
                             type="button"
                             onClick={() => handleUpdatePrinter(printer.id, { rolCopia: rol })}
-                            className={`py-2 text-xs font-bold rounded-lg transition-all ${
+                            className={`py-2 px-1 text-xs font-bold rounded-lg transition-all text-center leading-tight ${
                               printer.rolCopia === rol
                                 ? 'bg-red-600 text-white shadow-md'
                                 : 'text-neutral-400 hover:text-neutral-200'
                             }`}
                           >
-                            {rol === 'AMBOS' ? 'Ambos' : rol === 'COCINA' ? 'Cocina' : 'Caja'}
+                            {rol === 'COCINA' ? 'Cocina' : rol === 'CAJA' ? 'Caja / Factura' : 'Ambos'}
                           </button>
                         ))}
                       </div>
+                      <p className="text-[11px] text-neutral-400 mt-1.5 leading-snug">
+                        {printer.rolCopia === 'COCINA' && '👨‍🍳 Solo comanda de cocina sin precios, con notas y QR para preparar.'}
+                        {printer.rolCopia === 'CAJA' && '🧾 Solo factura formal para el cliente con precios, datos fiscales y pago.'}
+                        {printer.rolCopia === 'AMBOS' && '⚡ Imprime comanda de cocina y luego factura de cliente (ideal para 1 sola impresora).'}
+                      </p>
                     </div>
 
                     {/* Paper width selector */}
