@@ -89,7 +89,11 @@ async function handleOrder(orderId: string) {
           tipoDocumentoFacturacion,
           documentoFacturacion,
           nombreFacturacion,
-          emailFacturacion
+          emailFacturacion,
+          DetalleRecaudoCredibanco ( metodoPago, franquicia ),
+          DetalleRecaudoBreB ( id, keyValue, estadoLlave ),
+          DetalleRecaudoPse ( id, bankName, trazabilityCode ),
+          DetalleRecaudoWompi ( metodoPago, referenciaWompi )
         ),
         DetallePedido (
           cantidad,
