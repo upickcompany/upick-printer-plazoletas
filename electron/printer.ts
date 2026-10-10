@@ -493,9 +493,10 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
 
           const nombreRest = orderData.Restaurante?.nombreSucursal;
 
-          // ENCABEZADO Y ROL
+          // INICIALIZACIÓN, FUENTE ESTÁNDAR Y ENCABEZADO
           printer
-            .font('b')
+            .hardware('init')
+            .font('a')
             .align('ct')
             .style('b')
             .size(1, 1)
@@ -504,16 +505,17 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
             .text('UPick');
 
           if (nombreRest) {
-            printer.size(1, 1).text(removeAccents(nombreRest));
+            printer.size(1, 1).style('normal').text(removeAccents(nombreRest));
           }
 
           printer
             .size(1, 1)
+            .style('b')
             .text('Pedido #' + codigoTicket)
             .text('PAGADO');
 
           if (fechaImpresion) {
-            printer.text(fechaImpresion);
+            printer.style('normal').text(fechaImpresion);
           }
 
           const is58mm = printerConfig.anchoPapel === '58mm';
@@ -537,6 +539,7 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
 
           printer
             .align('ct')
+            .style('normal')
             .text(dividerLine)
             .align('lt')
             .text(`Cliente: ${transaccionInfo}`);
@@ -553,7 +556,9 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
             .align('ct')
             .text(dividerLine)
             .align('lt')
+            .style('b')
             .text(headerLine)
+            .style('normal')
             .text(dividerLine);
 
           let totalItems = 0;
@@ -583,7 +588,9 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
           printer
             .feed(1)
             .align('rt')
+            .style('b')
             .text(`Total articulos: ${totalItems}`)
+            .style('normal')
             .align('ct')
             .text(dividerLine)
             .text('Gracias por usar UPick!')
