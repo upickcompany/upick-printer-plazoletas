@@ -292,6 +292,74 @@ function getReservaInfo(orderData: any) {
   return { esReserva, fechaProgramadaTexto, horaProgramadaTexto };
 }
 
+function formatBadgeBoxEscpos(text: string, width = 40, dashed = false): string[] {
+  const clean = removeAccents(text);
+  const textLen = clean.length;
+  const boxWidth = Math.min(width, textLen + 4);
+  const border = dashed 
+    ? '+ ' + '- '.repeat(Math.max(1, Math.floor((boxWidth - 4) / 2))) + '+'
+    : '+' + '-'.repeat(boxWidth - 2) + '+';
+  const innerWidth = boxWidth - 4;
+  const spacesBefore = Math.max(0, Math.floor((innerWidth - textLen) / 2));
+  const spacesAfter = Math.max(0, innerWidth - textLen - spacesBefore);
+  const sideChar = dashed ? ': ' : '| ';
+  const sideEnd = dashed ? ' :' : ' |';
+  const content = sideChar + ' '.repeat(spacesBefore) + clean + ' '.repeat(spacesAfter) + sideEnd;
+  return [border, content, border];
+}
+
+function formatBoxEscpos(lines: string[], width = 40, dashed = false): string[] {
+  const border = dashed 
+    ? '+ ' + '- '.repeat(Math.max(1, Math.floor((width - 4) / 2))) + '+'
+    : '+' + '-'.repeat(width - 2) + '+';
+  const innerWidth = width - 4;
+  const sideChar = dashed ? ': ' : '| ';
+  const sideEnd = dashed ? ' :' : ' |';
+  const result: string[] = [border];
+  for (const line of lines) {
+    const clean = removeAccents(line);
+    const truncatedOrPadded = clean.length > innerWidth 
+      ? clean.substring(0, innerWidth) 
+      : clean.padEnd(innerWidth);
+    result.push(sideChar + truncatedOrPadded + sideEnd);
+  }
+  result.push(border);
+  return result;
+}
+
+function formatInvoiceItemRowsEscpos(cant: string, desc: string, total: string, lineLength = 40): string[] {
+  const cleanDesc = removeAccents(desc);
+  const cleanPrice = removeAccents(total);
+  const cantWidth = lineLength <= 32 ? 3 : 4;
+  const totalWidth = lineLength <= 32 ? 9 : 10;
+  const descWidth = lineLength - cantWidth - totalWidth;
+
+  const cantCol = cant.toString().padEnd(cantWidth);
+  const totalCol = cleanPrice.padStart(totalWidth);
+
+  let descParts: string[] = [];
+  let remaining = cleanDesc;
+  while (remaining.length > 0) {
+    if (remaining.length <= descWidth) {
+      descParts.push(remaining);
+      break;
+    }
+    let splitAt = remaining.lastIndexOf(' ', descWidth);
+    if (splitAt <= 0) splitAt = descWidth;
+    descParts.push(remaining.substring(0, splitAt));
+    remaining = remaining.substring(splitAt).trim();
+  }
+
+  const lines: string[] = [];
+  const firstDesc = (descParts[0] || '').padEnd(descWidth);
+  lines.push(cantCol + firstDesc + totalCol);
+
+  for (let i = 1; i < descParts.length; i++) {
+    lines.push(' '.repeat(cantWidth) + descParts[i]);
+  }
+  return lines;
+}
+
 // -------------------------------------------------------------
 // IMPRESIÓN POR WINDOWS SPOOLER (CABLE / USB NATIVO)
 // -------------------------------------------------------------
@@ -409,10 +477,10 @@ function generateReceiptHtml(orderData: any, printerConfig: ImpresoraConfig): st
   const fechaImpresion = orderData.createdAt ? formatBogotaDate(orderData.createdAt) : '';
 
   const is58mm = printerConfig.anchoPapel === '58mm';
-  const bodyWidth = is58mm ? '48mm' : '66mm';
-  const bodyPadding = is58mm ? '4px 3px 20px 3px' : '4px 4px 24px 4px';
+  const bodyWidth = is58mm ? '46mm' : '64mm';
+  const bodyPadding = is58mm ? '1px 1px 16px 1px' : '1px 2px 20px 2px';
   const fontSize = is58mm ? '11px' : '12px';
-  const qtyWidth = is58mm ? '28px' : '36px';
+  const qtyWidth = is58mm ? '24px' : '30px';
 
   let qrBase64 = '';
   try {
@@ -437,7 +505,7 @@ function generateReceiptHtml(orderData: any, printerConfig: ImpresoraConfig): st
       }
       if (item.EleccionAdicional && item.EleccionAdicional.length > 0) {
         item.EleccionAdicional.forEach((eleccion: any) => {
-          extrasHtml += `<div class="item-detail">+ ${eleccion.nombreOpcion}</div>`;
+          extrasHtml += `<div class="item-detail">- ${eleccion.nombreOpcion}</div>`;
         });
       }
 
@@ -460,6 +528,9 @@ function generateReceiptHtml(orderData: any, printerConfig: ImpresoraConfig): st
     box-sizing: border-box;
     margin: 0;
     padding: 0;
+    -webkit-font-smoothing: none !important;
+    font-smooth: never !important;
+    text-rendering: geometricPrecision !important;
   }
   @page {
     margin: 0;
@@ -468,66 +539,70 @@ function generateReceiptHtml(orderData: any, printerConfig: ImpresoraConfig): st
     margin: 0;
     padding: ${bodyPadding};
     width: ${bodyWidth};
-    max-width: 100%;
+    max-width: ${bodyWidth};
     font-family: 'Courier New', Courier, monospace, sans-serif;
     font-size: ${fontSize};
     line-height: 1.25;
     color: #000 !important;
     background: #fff !important;
-    font-weight: 500;
+    font-weight: 700 !important;
     word-wrap: break-word;
-    overflow: visible !important;
+    overflow-x: hidden !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
   .center { text-align: center; }
   .right { text-align: right; }
-  .title { font-size: ${is58mm ? '15px' : '17px'}; font-weight: 800; line-height: 1.1; margin: 3px 0 2px 0; }
-  .subtitle { font-size: ${is58mm ? '11px' : '13px'}; font-weight: 600; margin-bottom: 2px; }
   .badge-role {
     border: 2px dashed #000;
-    padding: 2px 5px;
-    font-size: ${is58mm ? '11px' : '12px'};
+    padding: 2px 6px;
+    font-size: ${is58mm ? '10.5px' : '12px'};
     font-weight: 800;
     margin: 3px auto;
     display: inline-block;
   }
+  .title { font-size: ${is58mm ? '15px' : '17px'}; font-weight: 800; line-height: 1.1; margin: 3px 0 2px 0; }
+  .subtitle { font-size: ${is58mm ? '11.5px' : '12.5px'}; font-weight: 700; margin-bottom: 2px; }
+  .order-number { font-size: ${is58mm ? '14px' : '16px'}; font-weight: 900; margin: 3px 0; }
+  .order-paid { font-size: ${is58mm ? '11.5px' : '12.5px'}; font-weight: 800; }
+  .order-date { font-size: ${is58mm ? '10.5px' : '11.5px'}; font-weight: 700; margin-top: 2px; }
   .reserva-box {
-    border: 3px double #000;
-    padding: 5px;
-    margin: 6px 0;
+    border: 2.5px double #000;
+    padding: 4px;
+    margin: 5px 0;
     text-align: center;
   }
   .reserva-title {
-    font-size: ${is58mm ? '11px' : '13px'};
+    font-size: ${is58mm ? '10.5px' : '12px'};
     font-weight: 900;
     letter-spacing: 0.5px;
   }
   .reserva-time {
-    font-size: ${is58mm ? '13px' : '15px'};
+    font-size: ${is58mm ? '12px' : '14px'};
     font-weight: 900;
     margin-top: 2px;
   }
   .divider {
-    border-top: 1px dashed #000;
+    border-top: 1.5px dashed #000;
     margin: 5px 0;
   }
   .table-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    border-top: 1px dashed #000;
-    border-bottom: 1px dashed #000;
+    border-top: 1.5px dashed #000;
+    border-bottom: 1.5px dashed #000;
     padding: 3px 0;
     font-weight: 800;
-    margin-top: 4px;
+    margin: 4px 0;
     font-size: ${fontSize};
   }
   .table-header-desc {
     flex: 1;
+    padding-right: 4px;
   }
   .table-header-qty {
-    min-width: ${qtyWidth};
+    width: ${qtyWidth};
     text-align: right;
   }
   .item-row {
@@ -538,7 +613,7 @@ function generateReceiptHtml(orderData: any, printerConfig: ImpresoraConfig): st
   }
   .item-desc {
     flex: 1;
-    padding-right: 6px;
+    padding-right: 4px;
     font-size: ${fontSize};
     font-weight: 700;
     word-break: break-word;
@@ -547,25 +622,39 @@ function generateReceiptHtml(orderData: any, printerConfig: ImpresoraConfig): st
     font-size: ${fontSize};
     white-space: nowrap;
     font-weight: 800;
-    min-width: ${qtyWidth};
+    width: ${qtyWidth};
     text-align: right;
   }
   .item-detail {
     font-size: ${is58mm ? '10px' : '11px'};
     padding-left: 6px;
-    color: #222;
+    color: #000 !important;
+    font-weight: 700;
     margin-top: 1px;
     word-break: break-word;
+  }
+  .total-count {
+    font-size: ${is58mm ? '11.5px' : '12.5px'};
+    font-weight: 900;
   }
   .qr-container {
     text-align: center;
     margin-top: 8px;
   }
   .qr-img {
-    width: ${is58mm ? '105px' : '130px'};
-    height: ${is58mm ? '105px' : '130px'};
+    width: ${is58mm ? '100px' : '120px'};
+    height: ${is58mm ? '100px' : '120px'};
     display: block;
     margin: 4px auto;
+    image-rendering: pixelated;
+  }
+  .qr-text {
+    font-size: ${is58mm ? '10.5px' : '11.5px'};
+    font-weight: 700;
+  }
+  .qr-text-bold {
+    font-size: ${is58mm ? '10.5px' : '11.5px'};
+    font-weight: 900;
   }
 </style>
 </head>
@@ -574,9 +663,9 @@ function generateReceiptHtml(orderData: any, printerConfig: ImpresoraConfig): st
     <div class="badge-role">${roleTag}</div>
     <div class="title">UPick</div>
     ${nombreRest ? `<div class="subtitle">${nombreRest}</div>` : ''}
-    <div style="font-size: ${is58mm ? '13px' : '15px'}; font-weight: 800; margin: 3px 0;">Pedido #${codigoTicket}</div>
-    <div>PAGADO</div>
-    ${fechaImpresion ? `<div style="font-size: ${is58mm ? '10px' : '12px'}; margin-top: 2px;">${fechaImpresion}</div>` : ''}
+    <div class="order-number">Pedido #${codigoTicket}</div>
+    <div class="order-paid">PAGADO</div>
+    ${fechaImpresion ? `<div class="order-date">${fechaImpresion}</div>` : ''}
   </div>
 
   ${esReserva ? `
@@ -588,9 +677,9 @@ function generateReceiptHtml(orderData: any, printerConfig: ImpresoraConfig): st
   ` : ''}
 
   <div class="divider"></div>
+  ${tipoPedidoTexto ? `<div style="font-weight: 900; font-size: ${is58mm ? '12px' : '13px'}; margin-bottom: 2px;">${tipoPedidoTexto}</div>` : ''}
   <div>Cliente: ${transaccionInfo}</div>
   ${telefonoCliente ? `<div>${telefonoCliente}</div>` : ''}
-  ${tipoPedidoTexto ? `<div style="font-weight: 900; margin-top: 2px;">${tipoPedidoTexto}</div>` : ''}
   <div class="divider"></div>
 
   <div class="table-header">
@@ -601,18 +690,18 @@ function generateReceiptHtml(orderData: any, printerConfig: ImpresoraConfig): st
   ${itemsHtml}
 
   <div class="divider"></div>
-  <div class="right" style="font-size: ${is58mm ? '11px' : '13px'}; font-weight: 900;">Total articulos: ${totalItems}</div>
+  <div class="right total-count">Total articulos: ${totalItems}</div>
 
-  <div class="center" style="margin-top: 8px;">
+  <div class="center" style="margin-top: 8px; font-size: ${is58mm ? '11px' : '12px'}; font-weight: 700;">
     <div>Gracias por usar UPick!</div>
-    <div style="font-size: 11px; margin-top: 2px;">Para el restaurante:</div>
+    <div style="margin-top: 2px;">Para el restaurante:</div>
   </div>
 
   ${qrBase64 ? `
     <div class="qr-container">
       <img src="${qrBase64}" class="qr-img" />
-      <div style="font-size: 11px;">Escanea este QR para</div>
-      <div style="font-size: 11px; font-weight: 900;">marcar el pedido como LISTO.</div>
+      <div class="qr-text">Escanea este QR para</div>
+      <div class="qr-text-bold">marcar el pedido como LISTO.</div>
     </div>
   ` : ''}
 </body>
@@ -624,11 +713,11 @@ function generateReceiptHtml(orderData: any, printerConfig: ImpresoraConfig): st
 // -------------------------------------------------------------
 function generateCustomerInvoiceHtml(orderData: any, printerConfig: ImpresoraConfig): string {
   const is58mm = printerConfig.anchoPapel === '58mm';
-  const bodyWidth = is58mm ? '48mm' : '66mm';
-  const bodyPadding = is58mm ? '4px 3px 20px 3px' : '4px 4px 24px 4px';
+  const bodyWidth = is58mm ? '46mm' : '64mm';
+  const bodyPadding = is58mm ? '1px 1px 16px 1px' : '1px 2px 20px 2px';
   const fontSize = is58mm ? '11px' : '12px';
-  const qtyWidth = is58mm ? '24px' : '30px';
-  const priceWidth = is58mm ? '60px' : '75px';
+  const qtyWidth = is58mm ? '22px' : '26px';
+  const priceWidth = is58mm ? '58px' : '68px';
 
   const fiscal = getRestauranteFiscalInfo(orderData);
   const cliente = getClienteInvoiceInfo(orderData);
@@ -683,52 +772,60 @@ function generateCustomerInvoiceHtml(orderData: any, printerConfig: ImpresoraCon
 <head>
 <meta charset="utf-8">
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    -webkit-font-smoothing: none !important;
+    font-smooth: never !important;
+    text-rendering: geometricPrecision !important;
+  }
   @page { margin: 0; }
   body {
     margin: 0;
     padding: ${bodyPadding};
     width: ${bodyWidth};
-    max-width: 100%;
+    max-width: ${bodyWidth};
     font-family: 'Courier New', Courier, monospace, sans-serif;
     font-size: ${fontSize};
     line-height: 1.25;
     color: #000 !important;
     background: #fff !important;
-    font-weight: normal;
+    font-weight: 700 !important;
     word-wrap: break-word;
-    overflow: visible !important;
+    overflow-x: hidden !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
   .center { text-align: center; }
   .right { text-align: right; }
-  .title { font-size: ${is58mm ? '15px' : '18px'}; font-weight: 800; line-height: 1.1; margin: 2px 0; }
-  .brand { font-size: ${is58mm ? '12px' : '14px'}; font-weight: 700; margin-bottom: 2px; }
   .badge-invoice {
-    border: 1.5px solid #000;
-    padding: 2px 5px;
-    font-size: ${is58mm ? '10px' : '12px'};
-    font-weight: 700;
+    border: 2px solid #000;
+    padding: 2px 6px;
+    font-size: ${is58mm ? '10.5px' : '12px'};
+    font-weight: 800;
     margin: 3px auto;
     display: inline-block;
   }
-  .divider { border-top: 1px dashed #000; margin: 5px 0; }
-  .fiscal-info { font-size: ${is58mm ? '10px' : '11px'}; margin: 1px 0; line-height: 1.2; font-weight: normal; }
-  .client-box { font-size: ${is58mm ? '10px' : '11.5px'}; margin: 4px 0; line-height: 1.25; font-weight: normal; }
+  .brand { font-size: ${is58mm ? '14px' : '16px'}; font-weight: 800; margin: 2px 0 1px 0; }
+  .fiscal-info { font-size: ${is58mm ? '10.5px' : '11.5px'}; font-weight: 700; margin: 1px 0; line-height: 1.2; }
+  .ticket-title { font-size: ${is58mm ? '13px' : '15px'}; font-weight: 900; margin-top: 4px; }
+  .ticket-date { font-size: ${is58mm ? '10.5px' : '11.5px'}; font-weight: 700; margin-top: 1px; }
+  .divider { border-top: 1.5px dashed #000; margin: 5px 0; }
+  .client-box { font-size: ${is58mm ? '10.5px' : '11.5px'}; font-weight: 700; margin: 4px 0; line-height: 1.25; word-break: break-word; }
   .table-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    border-top: 1px dashed #000;
-    border-bottom: 1px dashed #000;
+    border-top: 1.5px dashed #000;
+    border-bottom: 1.5px dashed #000;
     padding: 3px 0;
-    font-weight: 700;
+    font-weight: 800;
     margin-top: 4px;
     font-size: ${fontSize};
   }
-  .th-qty { width: ${qtyWidth}; }
-  .th-desc { flex: 1; padding: 0 4px; }
+  .th-qty { width: ${qtyWidth}; text-align: left; }
+  .th-desc { flex: 1; padding: 0 3px; }
   .th-price { width: ${priceWidth}; text-align: right; }
   .item-row {
     display: flex;
@@ -736,35 +833,48 @@ function generateCustomerInvoiceHtml(orderData: any, printerConfig: ImpresoraCon
     align-items: flex-start;
     margin-top: 4px;
     font-size: ${fontSize};
-    font-weight: normal;
   }
-  .item-qty { width: ${qtyWidth}; font-weight: 600; }
-  .item-desc { flex: 1; padding: 0 4px; word-break: break-word; font-weight: normal; }
-  .item-price { width: ${priceWidth}; text-align: right; font-weight: 600; white-space: nowrap; }
-  .item-extra { font-size: ${is58mm ? '9.5px' : '10.5px'}; color: #333; margin-top: 1px; font-weight: normal; }
+  .item-qty { width: ${qtyWidth}; font-weight: 800; text-align: left; }
+  .item-desc { flex: 1; padding: 0 3px; word-break: break-word; font-weight: 700; }
+  .item-price { width: ${priceWidth}; text-align: right; font-weight: 800; white-space: nowrap; }
+  .item-extra {
+    font-size: ${is58mm ? '10px' : '11px'};
+    color: #000 !important;
+    font-weight: 700;
+    margin-top: 1px;
+    padding-left: 2px;
+    word-break: break-word;
+  }
   .totals-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin: 2px 0;
     font-size: ${fontSize};
-    font-weight: normal;
+    font-weight: 700;
   }
   .total-highlight {
     font-size: ${is58mm ? '13px' : '15px'};
-    font-weight: 800;
-    border-top: 1px dashed #000;
-    border-bottom: 1px dashed #000;
+    font-weight: 900;
+    border-top: 1.5px dashed #000;
+    border-bottom: 1.5px dashed #000;
     padding: 4px 0;
     margin-top: 4px;
   }
   .pay-box {
-    border: 1px dashed #000;
+    border: 1.5px dashed #000;
     padding: 4px;
     margin: 6px 0;
-    font-size: ${is58mm ? '10px' : '11px'};
+    font-size: ${is58mm ? '10.5px' : '11.5px'};
     text-align: center;
-    font-weight: normal;
+    font-weight: 700;
+    line-height: 1.35;
+  }
+  .footer {
+    font-size: ${is58mm ? '10.5px' : '11.5px'};
+    font-weight: 700;
+    line-height: 1.3;
+    margin-top: 6px;
   }
 </style>
 </head>
@@ -777,8 +887,8 @@ function generateCustomerInvoiceHtml(orderData: any, printerConfig: ImpresoraCon
     <div class="fiscal-info">${fiscal.regimen}</div>
     ${fiscal.ubicacionTexto ? `<div class="fiscal-info">${fiscal.ubicacionTexto}</div>` : ''}
     ${fiscal.telefono ? `<div class="fiscal-info">Tel: ${fiscal.telefono}</div>` : ''}
-    <div style="font-size: ${is58mm ? '13px' : '15px'}; font-weight: 900; margin-top: 4px;">Pedido UPick #${codigoTicket}</div>
-    ${fechaStr ? `<div style="font-size: ${is58mm ? '10px' : '11px'};">${fechaStr}</div>` : ''}
+    <div class="ticket-title">Pedido UPick #${codigoTicket}</div>
+    ${fechaStr ? `<div class="ticket-date">${fechaStr}</div>` : ''}
   </div>
 
   <div class="divider"></div>
@@ -786,7 +896,7 @@ function generateCustomerInvoiceHtml(orderData: any, printerConfig: ImpresoraCon
   <div class="client-box">
     <div><strong>Cliente:</strong> ${cliente.nombreCliente}</div>
     <div><strong>Doc/NIT:</strong> ${cliente.documentoCliente}</div>
-    ${cliente.telefonoCliente ? `<div><strong>Tel:</strong> ${cliente.telefonoCliente}</div>` : ''}
+    ${cliente.telefonoCliente ? `<div><strong>Tel:</strong> ${cliente.telefonoCliente.replace(/^Tel:\s*/i, '')}</div>` : ''}
     ${cliente.emailCliente ? `<div><strong>Email:</strong> ${cliente.emailCliente}</div>` : ''}
     ${cliente.tipoPedidoTexto ? `<div style="font-weight: 900; margin-top: 2px;">${cliente.tipoPedidoTexto}</div>` : ''}
   </div>
@@ -838,10 +948,10 @@ function generateCustomerInvoiceHtml(orderData: any, printerConfig: ImpresoraCon
     <div>Ref: #${orderData.id ? orderData.id.slice(-8).toUpperCase() : 'UPICK'}</div>
   </div>
 
-  <div class="center" style="font-size: ${is58mm ? '10px' : '11px'}; margin-top: 6px;">
+  <div class="center footer">
     <div>*** GRACIAS POR SU COMPRA ***</div>
     <div>Conserve este comprobante</div>
-    <div style="font-size: 9.5px; margin-top: 2px; color: #333;">Plataforma UPick Plazoletas</div>
+    <div style="font-size: 10px; margin-top: 2px; color: #000;">Plataforma UPick Plazoletas</div>
   </div>
 </body>
 </html>`;
@@ -929,6 +1039,10 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
           }
 
           const nombreRest = orderData.Restaurante?.nombreSucursal;
+          const is58mm = printerConfig.anchoPapel === '58mm';
+          const lineLength = is58mm ? 32 : 40;
+          const dividerLine = '-'.repeat(lineLength);
+          const reservaDivider = '='.repeat(lineLength);
 
           // INICIALIZACIÓN, FUENTE ESTÁNDAR Y ENCABEZADO
           printer
@@ -941,16 +1055,21 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
             printer.buffer.write('\x1b\x45\x00\x1b\x47\x00\x1b\x21\x00\x1d\x21\x00');
           }
 
+          // 1. BADGE DE ROL (RECUADRO DASHED)
+          printer.align('ct').style('b');
+          const roleBadgeLines = formatBadgeBoxEscpos(roleTag, lineLength, true);
+          roleBadgeLines.forEach((l: string) => printer.text(l));
+
           printer
-            .align('ct')
+            .feed(1)
+            .size(1, 1)
             .style('b')
-            .size(0, 0)
-            .text(roleTag)
             .text('UPick')
+            .size(0, 0)
             .style('normal');
 
           if (nombreRest) {
-            printer.size(0, 0).style('normal').text(removeAccents(nombreRest));
+            printer.size(0, 0).style('b').text(removeAccents(nombreRest)).style('normal');
           }
 
           printer
@@ -958,18 +1077,13 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
             .style('b')
             .text('Pedido #' + codigoTicket)
             .size(0, 0)
-            .style('normal')
-            .text('PAGADO');
+            .style('b')
+            .text('PAGADO')
+            .style('normal');
 
           if (fechaImpresion) {
             printer.size(0, 0).style('normal').text(fechaImpresion);
           }
-
-          const is58mm = printerConfig.anchoPapel === '58mm';
-          const lineLength = is58mm ? 32 : 42;
-          const dividerLine = '-'.repeat(lineLength);
-          const reservaDivider = '='.repeat(lineLength);
-          const headerLine = 'DESCRIPCION'.padEnd(lineLength - 4) + 'CANT';
 
           // BANNER DE RESERVA
           if (esReserva) {
@@ -988,29 +1102,31 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
 
           printer
             .align('ct')
-            .size(0, 0)
-            .style('normal')
             .text(dividerLine)
             .align('lt');
 
           if (tipoPedidoTexto) {
-            printer.size(0, 0).style('b').text(tipoPedidoTexto).style('normal');
+            printer.style('b').text(tipoPedidoTexto).style('normal');
           }
 
-          printer.size(0, 0).style('normal').text(`Cliente: ${transaccionInfo}`);
+          printer.text(`Cliente: ${transaccionInfo}`);
 
           if (telefonoCliente) {
-            printer.size(0, 0).style('normal').text(telefonoCliente);
+            printer.text(telefonoCliente);
           }
 
           printer
             .align('ct')
-            .size(0, 0)
-            .style('normal')
             .text(dividerLine)
             .align('lt')
-            .style('b')
-            .text(headerLine)
+            .style('b');
+
+          const headerDesc = 'DESCRIPCION';
+          const headerQty = 'CANT';
+          const spacesH = lineLength - headerDesc.length - headerQty.length;
+          printer.text(headerDesc + ' '.repeat(Math.max(0, spacesH)) + headerQty);
+
+          printer
             .style('normal')
             .align('ct')
             .text(dividerLine)
@@ -1025,18 +1141,18 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
               const desc = removeAccents(item.ProductoMenu?.nombre || 'Producto');
               const cant = cantNum.toString();
               
-              printer.size(0, 0).style('b');
+              printer.style('b');
               const formattedLines = formatItemRow(desc, cant, lineLength);
               formattedLines.forEach(line => printer.text(line));
               printer.style('normal');
 
               if (item.notas) {
-                printer.size(0, 0).style('normal').text(`   Nota: ${removeAccents(item.notas)}`);
+                printer.text(`   Nota: ${removeAccents(item.notas)}`);
               }
 
               if (item.EleccionAdicional && item.EleccionAdicional.length > 0) {
                 item.EleccionAdicional.forEach((eleccion: any) => {
-                  printer.size(0, 0).style('normal').text(`   - ${removeAccents(eleccion.nombreOpcion)}`);
+                  printer.text(`   - ${removeAccents(eleccion.nombreOpcion)}`);
                 });
               }
             });
@@ -1045,7 +1161,6 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
           printer
             .feed(1)
             .align('rt')
-            .size(0, 0)
             .style('b')
             .text(`Total articulos: ${totalItems}`)
             .style('normal')
@@ -1058,16 +1173,17 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
 
           const qrUrl = `https://plazoletas.upickcol.com/qrc/pedido/${orderData.id}`;
 
-          printer.qrimage(qrUrl, { type: 'png', mode: 'normal', size: 5, margin: 2, ec_level: 'M' }, (err: any) => {
+          printer.qrimage(qrUrl, { type: 'png', mode: 'normal', size: is58mm ? 4 : 5, margin: 1, ec_level: 'M' }, (err: any) => {
             if (err) {
               console.error('Error generando qrimage escpos:', err);
             }
             printer
               .feed(1)
-              .size(0, 0)
               .style('normal')
               .text('Escanea este QR para')
+              .style('b')
               .text('marcar el pedido como LISTO.')
+              .style('normal')
               .feed(3)
               .cut();
 
@@ -1161,11 +1277,10 @@ async function printCustomerInvoiceViaNetworkEscpos(orderData: any, printerConfi
           }
 
           const is58mm = printerConfig.anchoPapel === '58mm';
-          const lineLength = is58mm ? 32 : 42;
+          const lineLength = is58mm ? 32 : 40;
           const dividerLine = '-'.repeat(lineLength);
-          const doubleDivider = '='.repeat(lineLength);
 
-          // 1. INICIALIZACIÓN Y ENCABEZADO FISCAL (FUENTE ESTÁNDAR 'A', TAMAÑO NORMAL)
+          // 1. INICIALIZACIÓN
           printer
             .hardware('init')
             .font('a')
@@ -1176,15 +1291,18 @@ async function printCustomerInvoiceViaNetworkEscpos(orderData: any, printerConfi
             printer.buffer.write('\x1b\x45\x00\x1b\x47\x00\x1b\x21\x00\x1d\x21\x00');
           }
 
+          // RECUADRO SÓLIDO: COMPROBANTE DE VENTA
+          printer.align('ct').style('b');
+          const badgeInvoiceLines = formatBadgeBoxEscpos('COMPROBANTE DE VENTA', lineLength, false);
+          badgeInvoiceLines.forEach((l: string) => printer.text(l));
+
+          // MARCA / NOMBRE DEL RESTAURANTE COMO TÍTULO PRINCIPAL
           printer
-            .align('ct')
+            .feed(1)
+            .size(1, 0)
             .style('b')
-            .size(0, 0)
-            .text('COMPROBANTE DE VENTA')
-            .size(1, 1)
-            .text('UPick')
-            .size(0, 0)
             .text(removeAccents(fiscal.nombreComercial))
+            .size(0, 0)
             .style('normal');
 
           if (fiscal.razonSocial) {
@@ -1212,7 +1330,7 @@ async function printCustomerInvoiceViaNetworkEscpos(orderData: any, printerConfi
             printer.text(fechaStr);
           }
 
-          // 2. DATOS DEL CLIENTE (TEXTO NORMAL)
+          // 2. DATOS DEL CLIENTE
           printer
             .align('ct')
             .text(dividerLine)
@@ -1222,7 +1340,7 @@ async function printCustomerInvoiceViaNetworkEscpos(orderData: any, printerConfi
             .text(`Doc/NIT: ${removeAccents(cliente.documentoCliente)}`);
 
           if (cliente.telefonoCliente) {
-            printer.text(removeAccents(cliente.telefonoCliente));
+            printer.text(removeAccents(cliente.telefonoCliente.replace(/^Tel:\s*/i, 'Tel: ')));
           }
           if (cliente.emailCliente) {
             printer.text(removeAccents(cliente.emailCliente));
@@ -1231,17 +1349,20 @@ async function printCustomerInvoiceViaNetworkEscpos(orderData: any, printerConfi
             printer.style('b').text(removeAccents(cliente.tipoPedidoTexto)).style('normal');
           }
 
-          // 3. TABLA DE ÍTEMS Y PRECIOS
+          // 3. TABLA DE 3 COLUMNAS: CANT / DESCRIPCION / TOTAL
           printer
             .align('ct')
             .text(dividerLine)
             .align('lt')
             .style('b');
 
-          const headerDesc = 'CANT / DESCRIPCION';
-          const headerPrice = 'TOTAL';
-          const spacesH = lineLength - headerDesc.length - headerPrice.length;
-          printer.text(headerDesc + ' '.repeat(Math.max(0, spacesH)) + headerPrice);
+          const cantWidth = is58mm ? 3 : 4;
+          const totalWidth = is58mm ? 9 : 10;
+          const descWidth = lineLength - cantWidth - totalWidth;
+          const thCant = 'CANT'.padEnd(cantWidth);
+          const thDesc = 'DESCRIPCION'.padEnd(descWidth);
+          const thTotal = 'TOTAL'.padStart(totalWidth);
+          printer.text(thCant + thDesc + thTotal);
 
           printer
             .style('normal')
@@ -1257,8 +1378,13 @@ async function printCustomerInvoiceViaNetworkEscpos(orderData: any, printerConfi
               const lineTotal = cantNum * unitPrice;
 
               printer.style('normal');
-              const itemRows = formatPriceRow(`${cantNum}x ${desc}`, formatCOP(lineTotal), lineLength);
-              itemRows.forEach(row => printer.text(row));
+              const itemRows = formatInvoiceItemRowsEscpos(
+                cantNum.toString(),
+                desc,
+                formatCOP(lineTotal),
+                lineLength
+              );
+              itemRows.forEach((row: string) => printer.text(row));
 
               if (item.notas) {
                 printer.text(`   Nota: ${removeAccents(item.notas)}`);
@@ -1282,40 +1408,44 @@ async function printCustomerInvoiceViaNetworkEscpos(orderData: any, printerConfi
             .style('normal');
 
           const subtotalRows = formatPriceRow('Subtotal Alimentos:', formatCOP(totales.subtotal), lineLength);
-          subtotalRows.forEach(row => printer.text(row));
+          subtotalRows.forEach((row: string) => printer.text(row));
 
           if (totales.descuento > 0) {
             const descLabel = `Descuento ${totales.cuponCodigo ? `(${totales.cuponCodigo})` : ''}:`;
             const descRows = formatPriceRow(descLabel, `-${formatCOP(totales.descuento)}`, lineLength);
-            descRows.forEach(row => printer.text(row));
+            descRows.forEach((row: string) => printer.text(row));
           }
 
           if (totales.feeServicio > 0) {
             const feeRows = formatPriceRow('Tarifa Servicio:', formatCOP(totales.feeServicio), lineLength);
-            feeRows.forEach(row => printer.text(row));
+            feeRows.forEach((row: string) => printer.text(row));
           }
 
           if (totales.propina > 0) {
             const tipRows = formatPriceRow('Propina Voluntaria:', formatCOP(totales.propina), lineLength);
-            tipRows.forEach(row => printer.text(row));
+            tipRows.forEach((row: string) => printer.text(row));
           }
 
           printer
             .align('ct')
-            .text(doubleDivider)
+            .text(dividerLine)
             .align('lt')
             .style('b');
 
           const totalRows = formatPriceRow('TOTAL PAGADO:', formatCOP(totales.total), lineLength);
-          totalRows.forEach(row => printer.text(row));
+          totalRows.forEach((row: string) => printer.text(row));
+
+          // 5. CAJA DE PAGO DASHED (PAY-BOX)
+          printer.feed(1).align('ct').style('normal');
+          const payLines = [
+            'ESTADO: PAGADO / APROBADO',
+            `MEDIO: ${getMedioPagoTexto(orderData)}`,
+            `Ref: #${orderData.id ? orderData.id.slice(-8).toUpperCase() : 'UPICK'}`
+          ];
+          const boxedPay = formatBoxEscpos(payLines, lineLength, true);
+          boxedPay.forEach((l: string) => printer.text(l));
 
           printer
-            .style('normal')
-            .align('ct')
-            .text(doubleDivider)
-            .text('ESTADO: PAGADO / APROBADO')
-            .text(`MEDIO: ${getMedioPagoTexto(orderData)}`)
-            .text(`Ref: #${orderData.id ? orderData.id.slice(-8).toUpperCase() : 'UPICK'}`)
             .feed(1)
             .text('*** GRACIAS POR SU COMPRA ***')
             .text('Conserve este comprobante')
@@ -1679,7 +1809,7 @@ export async function testPrinter(config: any): Promise<boolean> {
       }
 
       const is58mm = config.anchoPapel === '58mm';
-      const bodyWidth = is58mm ? '48mm' : '66mm';
+      const bodyWidth = is58mm ? '46mm' : '64mm';
       const rolDesc = config.rolCopia === 'COCINA' 
         ? 'Solo Cocina (Comanda)' 
         : (config.rolCopia === 'CAJA' ? 'Solo Caja (Factura Cliente)' : 'Ambos (Comanda + Factura)');
@@ -1693,26 +1823,30 @@ export async function testPrinter(config: any): Promise<boolean> {
     box-sizing: border-box;
     margin: 0;
     padding: 0;
+    -webkit-font-smoothing: none !important;
+    font-smooth: never !important;
+    text-rendering: geometricPrecision !important;
   }
   @page {
     margin: 0;
   }
   body {
-    font-family: 'Courier New', Courier, monospace;
+    font-family: 'Courier New', Courier, monospace, sans-serif;
     text-align: center;
-    padding: 10px 4px 18px 4px;
+    padding: 8px 2px 16px 2px;
     width: ${bodyWidth};
-    max-width: 100%;
+    max-width: ${bodyWidth};
     font-size: ${is58mm ? '11px' : '12px'};
+    font-weight: 700 !important;
     color: #000 !important;
     background: #fff !important;
     word-wrap: break-word;
-    overflow: visible !important;
+    overflow-x: hidden !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
-  h2 { font-size: ${is58mm ? '14px' : '16px'}; margin: 0 0 6px 0; }
-  p { font-size: ${is58mm ? '11px' : '12px'}; margin: 3px 0; }
+  h2 { font-size: ${is58mm ? '14px' : '16px'}; font-weight: 900; margin: 0 0 6px 0; }
+  p { font-size: ${is58mm ? '10.5px' : '11.5px'}; font-weight: 700; margin: 3px 0; }
 </style>
 </head>
 <body>
@@ -1785,18 +1919,30 @@ export async function testPrinter(config: any): Promise<boolean> {
             }
 
             try {
+              const is58mm = config.anchoPapel === '58mm';
+              const lineLength = is58mm ? 32 : 40;
+              const testBadge = formatBadgeBoxEscpos('PRUEBA DE CONEXION', lineLength, false);
+
               printer
                 .hardware('init')
                 .font('a')
                 .size(0, 0)
                 .align('ct')
+                .style('b');
+
+              testBadge.forEach((l: string) => printer.text(l));
+
+              printer
                 .style('b')
-                .text('Prueba de Conexion Exitosa')
-                .style('normal')
                 .text('UPick Printer Plazoletas')
+                .style('normal')
                 .text(`Impresora: ${config.nombre || 'Red'}`)
                 .text(`IP: ${ip}:${port}`)
                 .text(`Rol: ${rolDesc}`)
+                .text(`Papel: ${is58mm ? '58 mm (Mini)' : '80 mm (Estandar)'}`)
+                .text('-'.repeat(lineLength))
+                .text('!Conexion de Red Exitosa!')
+                .text(new Date().toLocaleString('es-CO'))
                 .feed(3)
                 .cut()
                 .close(() => {
