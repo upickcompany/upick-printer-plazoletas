@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { store } from './store';
 import { printToAllPrinters, printOrderToConsole } from './printer';
 import { parseColombianDate } from './timeUtils';
+import { startHeartbeat, stopHeartbeat } from './heartbeat';
 
 // Leer variables de entorno (cargadas por Vite en import.meta.env)
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
@@ -213,7 +214,7 @@ export async function setupSupabaseRealtime(onStatusChange: (status: 'connected'
     // 2. Obtener el restauranteId del usuario
     const { data: userData, error: userError } = await supabase
       .from('Usuario')
-      .select('restauranteId, Restaurante(nombreSucursal)')
+      .select('restauranteId, Restaurante(nombreSucursal, printerToken)')
       .eq('id', authData.user.id)
       .single();
 
@@ -237,6 +238,8 @@ export async function setupSupabaseRealtime(onStatusChange: (status: 'connected'
     // Opcional: imprimir el nombre de la sucursal
     const sucursalNombre = (userData.Restaurante as any)?.nombreSucursal || 'Desconocida';
     console.log(`Conectado exitosamente a la sucursal: ${sucursalNombre} (${restaurantId})`);
+    const printerToken = (userData.Restaurante as any)?.printerToken || null;
+    startHeartbeat(restaurantId, printerToken);
 
     // Si ya había un canal, lo cerramos antes de abrir uno nuevo
     if (realtimeChannel) {
@@ -286,6 +289,7 @@ export async function setupSupabaseRealtime(onStatusChange: (status: 'connected'
 }
 
 export async function disconnectSupabase() {
+  stopHeartbeat();
   if (realtimeChannel) {
     await supabase.removeChannel(realtimeChannel);
     realtimeChannel = null;
