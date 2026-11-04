@@ -194,6 +194,7 @@ export async function setupSupabaseRealtime(onStatusChange: (status: 'connected'
 
   if (!email || !password) {
     console.log('No hay credenciales guardadas, omitiendo setup de Realtime');
+    stopHeartbeat();
     onStatusChange('disconnected');
     return;
   }
@@ -207,6 +208,7 @@ export async function setupSupabaseRealtime(onStatusChange: (status: 'connected'
 
     if (authError || !authData.user) {
       console.error('Error de autenticación:', authError?.message);
+      stopHeartbeat();
       onStatusChange('error', 'Credenciales incorrectas');
       return;
     }
@@ -220,12 +222,14 @@ export async function setupSupabaseRealtime(onStatusChange: (status: 'connected'
 
     if (userError) {
       console.error('Error al consultar datos del usuario:', userError.message);
+      stopHeartbeat();
       onStatusChange('error', `Error de base de datos: ${userError.message}`);
       return;
     }
 
     if (!userData?.restauranteId) {
       console.error('El usuario no tiene un restaurante asignado.');
+      stopHeartbeat();
       onStatusChange('error', 'El usuario no tiene un restaurante asignado');
       return;
     }
@@ -236,9 +240,10 @@ export async function setupSupabaseRealtime(onStatusChange: (status: 'connected'
     store.set('restaurantId', restaurantId);
     
     // Opcional: imprimir el nombre de la sucursal
-    const sucursalNombre = (userData.Restaurante as any)?.nombreSucursal || 'Desconocida';
+    const restauranteObj = Array.isArray(userData.Restaurante) ? userData.Restaurante[0] : userData.Restaurante;
+    const sucursalNombre = (restauranteObj as any)?.nombreSucursal || 'Desconocida';
     console.log(`Conectado exitosamente a la sucursal: ${sucursalNombre} (${restaurantId})`);
-    const printerToken = (userData.Restaurante as any)?.printerToken || null;
+    const printerToken = (restauranteObj as any)?.printerToken || null;
     startHeartbeat(restaurantId, printerToken);
 
     // Si ya había un canal, lo cerramos antes de abrir uno nuevo
