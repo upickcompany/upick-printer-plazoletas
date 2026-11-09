@@ -6,6 +6,29 @@ import { fileURLToPath } from 'node:url'
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
+// ==============================================================================
+// 1. ESCUDO ANTI-CRASH (ZERO-CRASH GLOBAL)
+// Evita que cualquier fallo de socket de impresora, desconexión de red o
+// promesa rechazada tumbe el proceso de Electron.
+// ==============================================================================
+process.on('uncaughtException', (error) => {
+  console.error('🛡️ [Anti-Crash] Excepción no capturada capturada en Proceso Principal:', error?.stack || error);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('🛡️ [Anti-Crash] Promesa rechazada no manejada:', reason);
+});
+
+// ==============================================================================
+// 2. BLOQUEO DE INSTANCIA ÚNICA (SINGLE INSTANCE LOCK)
+// Impide que se abran dos agentes a la vez compitiendo por los puertos de impresión.
+// ==============================================================================
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  console.warn('⚠️ Otra instancia de UPick Printer Plazoletas ya está en ejecución. Saliendo de la segunda instancia...');
+  app.quit();
+}
+
 // The built directory structure
 //
 // ├─┬─┬ dist
@@ -216,21 +239,31 @@ function createWindow() {
   }
 }
 
-// Quit when all windows are closed, except on macOS. There, it's common
-// for applications and their menu bar to stay active until the user quits
-// explicitly with Cmd + Q.
+// Restaurar ventana si se intenta abrir una segunda instancia
+app.on('second-instance', () => {
+  if (win && !win.isDestroyed()) {
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+  }
+})
+
+// NUNCA salir al cerrar las ventanas: el agente de impresión debe permanecer
+// permanentemente activo como demonio en la bandeja del sistema (System Tray).
+// Solo saldrá cuando el usuario elija "Salir Completamente" desde el menú del Tray.
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  if (isQuitting) {
     app.quit()
     win = null
   }
 })
 
 app.on('activate', () => {
-  // On OS X it's common to re-create a window in the app when the
-  // dock icon is clicked and there are no other windows open.
-  if (BrowserWindow.getAllWindows().length === 0) {
+  // En macOS o al reactivar, si no hay ventana, crearla o mostrarla
+  if (!win || win.isDestroyed()) {
     createWindow()
+  } else {
+    win.show()
   }
 })
 

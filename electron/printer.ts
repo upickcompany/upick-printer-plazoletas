@@ -21,17 +21,17 @@ function formatBogotaDate(dateStr: string): string {
   }
   const d = new Date(str);
   if (isNaN(d.getTime())) return dateStr;
-  
+
   const bogotaTime = new Date(d.getTime() - (5 * 60 * 60 * 1000));
-  
+
   const day = bogotaTime.getUTCDate().toString().padStart(2, '0');
   const month = (bogotaTime.getUTCMonth() + 1).toString().padStart(2, '0');
   const year = bogotaTime.getUTCFullYear();
-  
+
   let hours = bogotaTime.getUTCHours();
   const minutes = bogotaTime.getUTCMinutes().toString().padStart(2, '0');
   const ampm = hours >= 12 ? 'p. m.' : 'a. m.';
-  
+
   hours = hours % 12;
   hours = hours ? hours : 12;
   const hoursStr = hours.toString().padStart(2, '0');
@@ -46,10 +46,10 @@ function formatCOP(amount: number | null | undefined): string {
 
 function formatPriceRow(desc: string, priceStr: string, lineLength = 32): string[] {
   const cleanPrice = removeAccents(priceStr);
-  const maxDescLen = lineLength - cleanPrice.length - 1; 
+  const maxDescLen = lineLength - cleanPrice.length - 1;
   let lines: string[] = [];
   let currentDesc = desc;
-  
+
   let firstLineText = currentDesc;
   if (firstLineText.length > maxDescLen) {
     let splitAt = firstLineText.lastIndexOf(' ', maxDescLen);
@@ -59,10 +59,10 @@ function formatPriceRow(desc: string, priceStr: string, lineLength = 32): string
   } else {
     currentDesc = '';
   }
-  
+
   const spaces = lineLength - firstLineText.length - cleanPrice.length;
   lines.push(firstLineText + ' '.repeat(Math.max(0, spaces)) + cleanPrice);
-  
+
   while (currentDesc.length > 0) {
     if (currentDesc.length > lineLength) {
       let splitAt = currentDesc.lastIndexOf(' ', lineLength);
@@ -74,7 +74,7 @@ function formatPriceRow(desc: string, priceStr: string, lineLength = 32): string
       currentDesc = '';
     }
   }
-  
+
   return lines;
 }
 
@@ -132,11 +132,14 @@ function getClienteInvoiceInfo(orderData: any) {
     }
   }
 
+  const esParaLlevar = Boolean(tx.paraLlevar || tx.ubicacionEntregaTexto?.toUpperCase().includes('LLEVAR'));
   let tipoPedidoTexto = '';
-  if (tx.tipoPedido === 'ENTREGA_MESA') {
+  if (esParaLlevar) {
+    tipoPedidoTexto = 'PARA LLEVAR (EMPACADO)';
+  } else if (tx.tipoPedido === 'RECOGIDA' || tx.ubicacionEntregaTexto?.toUpperCase().includes('PLAZOLETA')) {
+    tipoPedidoTexto = 'COMER EN PLAZOLETA (BANDEJA)';
+  } else if (tx.tipoPedido === 'ENTREGA_MESA') {
     tipoPedidoTexto = `ENTREGAR EN: ${tx.ubicacionEntregaTexto || 'Mesa no especificada'}`;
-  } else if (tx.tipoPedido === 'RECOGIDA') {
-    tipoPedidoTexto = 'PARA LLEVAR / RECOGER';
   }
 
   return {
@@ -144,7 +147,44 @@ function getClienteInvoiceInfo(orderData: any) {
     documentoCliente,
     emailCliente,
     telefonoCliente,
-    tipoPedidoTexto
+    tipoPedidoTexto,
+    esParaLlevar,
+  };
+}
+
+function getDeliveryBadgeInfo(orderData: any) {
+  const tx = orderData.TransaccionPago || {};
+  const esParaLlevar = Boolean(tx.paraLlevar || tx.ubicacionEntregaTexto?.toUpperCase().includes('LLEVAR'));
+
+  if (esParaLlevar) {
+    return {
+      title: '>>> EMPACAR PARA LLEVAR <<<',
+      subtitle: '(Bolsa y empaque para viaje)',
+      shortText: 'PARA LLEVAR (EMPACADO)',
+      mode: 'LLEVAR',
+    };
+  } else if (tx.tipoPedido === 'RECOGIDA' || tx.ubicacionEntregaTexto?.toUpperCase().includes('PLAZOLETA')) {
+    return {
+      title: '>>> COMER EN LA PLAZOLETA <<<',
+      subtitle: '(Servir en bandeja / plato)',
+      shortText: 'COMER EN PLAZOLETA (BANDEJA)',
+      mode: 'PLAZOLETA',
+    };
+  } else if (tx.tipoPedido === 'ENTREGA_MESA') {
+    const mesa = tx.ubicacionEntregaTexto || 'Mesa no especificada';
+    return {
+      title: '>>> ENTREGAR EN LA MESA <<<',
+      subtitle: mesa,
+      shortText: `ENTREGAR EN: ${mesa}`,
+      mode: 'MESA',
+    };
+  }
+
+  return {
+    title: '>>> RECOGIDA EN MOSTRADOR <<<',
+    subtitle: '(Entregar al cliente)',
+    shortText: 'RECOGIDA EN MOSTRADOR',
+    mode: 'RECOGIDA',
   };
 }
 
@@ -154,7 +194,7 @@ function getFinancialTotals(orderData: any) {
   const cuponCodigo = orderData.cuponCodigo || '';
   const feeServicio = Number(orderData.montoFeeServicio || 0);
   const propina = Number(orderData.montoPropina || 0);
-  
+
   const total = Math.max(0, subtotal - descuento + feeServicio + propina);
 
   return {
@@ -224,11 +264,11 @@ function getMedioPagoTexto(orderData: any): string {
 
 function formatItemRow(desc: string, cant: string, lineLength = 32): string[] {
   const cantStr = cant.toString();
-  const maxDescLen = lineLength - cantStr.length - 1; 
-  
+  const maxDescLen = lineLength - cantStr.length - 1;
+
   let lines: string[] = [];
   let currentDesc = desc;
-  
+
   let firstLineText = currentDesc;
   if (firstLineText.length > maxDescLen) {
     let splitAt = firstLineText.lastIndexOf(' ', maxDescLen);
@@ -238,10 +278,10 @@ function formatItemRow(desc: string, cant: string, lineLength = 32): string[] {
   } else {
     currentDesc = '';
   }
-  
+
   const spaces = lineLength - firstLineText.length - cantStr.length;
   lines.push(firstLineText + ' '.repeat(Math.max(0, spaces)) + cantStr);
-  
+
   while (currentDesc.length > 0) {
     if (currentDesc.length > lineLength) {
       let splitAt = currentDesc.lastIndexOf(' ', lineLength);
@@ -253,7 +293,7 @@ function formatItemRow(desc: string, cant: string, lineLength = 32): string[] {
       currentDesc = '';
     }
   }
-  
+
   return lines;
 }
 
@@ -296,7 +336,7 @@ function formatBadgeBoxEscpos(text: string, width = 40, dashed = false): string[
   const clean = removeAccents(text);
   const textLen = clean.length;
   const boxWidth = Math.min(width, textLen + 4);
-  const border = dashed 
+  const border = dashed
     ? '+ ' + '- '.repeat(Math.max(1, Math.floor((boxWidth - 4) / 2))) + '+'
     : '+' + '-'.repeat(boxWidth - 2) + '+';
   const innerWidth = boxWidth - 4;
@@ -309,7 +349,7 @@ function formatBadgeBoxEscpos(text: string, width = 40, dashed = false): string[
 }
 
 function formatBoxEscpos(lines: string[], width = 40, dashed = false): string[] {
-  const border = dashed 
+  const border = dashed
     ? '+ ' + '- '.repeat(Math.max(1, Math.floor((width - 4) / 2))) + '+'
     : '+' + '-'.repeat(width - 2) + '+';
   const innerWidth = width - 4;
@@ -318,8 +358,8 @@ function formatBoxEscpos(lines: string[], width = 40, dashed = false): string[] 
   const result: string[] = [border];
   for (const line of lines) {
     const clean = removeAccents(line);
-    const truncatedOrPadded = clean.length > innerWidth 
-      ? clean.substring(0, innerWidth) 
+    const truncatedOrPadded = clean.length > innerWidth
+      ? clean.substring(0, innerWidth)
       : clean.padEnd(innerWidth);
     result.push(sideChar + truncatedOrPadded + sideEnd);
   }
@@ -454,23 +494,17 @@ export async function printViaWindowsSpooler(deviceName: string, htmlContent: st
 function generateReceiptHtml(orderData: any, printerConfig: ImpresoraConfig): string {
   const roleTag = getRoleTag(printerConfig.rolCopia);
   const { esReserva, fechaProgramadaTexto, horaProgramadaTexto } = getReservaInfo(orderData);
+  const delivery = getDeliveryBadgeInfo(orderData);
 
   let transaccionInfo = 'Cliente no identificado';
   let telefonoCliente = '';
   let codigoTicket = 'N/A';
-  let tipoPedidoTexto = '';
 
   if (orderData.TransaccionPago) {
     const tx = orderData.TransaccionPago;
     transaccionInfo = tx.nombreCliente || 'Cliente';
     telefonoCliente = tx.telefonoCliente ? `Tel: ${tx.telefonoCliente}` : '';
     codigoTicket = tx.id ? tx.id.slice(-6).toUpperCase() : 'N/A';
-
-    if (tx.tipoPedido === 'ENTREGA_MESA') {
-      tipoPedidoTexto = `ENTREGAR EN: ${tx.ubicacionEntregaTexto || 'Ubicación no especificada'}`;
-    } else if (tx.tipoPedido === 'RECOGIDA') {
-      tipoPedidoTexto = 'PARA RECOGER';
-    }
   }
 
   const nombreRest = orderData.Restaurante?.nombreSucursal || '';
@@ -498,7 +532,7 @@ function generateReceiptHtml(orderData: any, printerConfig: ImpresoraConfig): st
       const cant = item.cantidad || 1;
       totalItems += cant;
       const desc = item.ProductoMenu?.nombre || 'Producto';
-      
+
       let extrasHtml = '';
       if (item.notas) {
         extrasHtml += `<div class="item-detail">Nota: ${item.notas}</div>`;
@@ -585,6 +619,22 @@ function generateReceiptHtml(orderData: any, printerConfig: ImpresoraConfig): st
   .divider {
     border-top: 1.5px dashed #000;
     margin: 5px 0;
+  }
+  .delivery-banner {
+    border: 2px solid #000;
+    padding: 3px 4px;
+    margin: 4px 0 6px 0;
+    text-align: center;
+  }
+  .delivery-title {
+    font-size: ${is58mm ? '11px' : '12.5px'};
+    font-weight: 900;
+    letter-spacing: 0.3px;
+  }
+  .delivery-sub {
+    font-size: ${is58mm ? '9.5px' : '11px'};
+    font-weight: 800;
+    margin-top: 1px;
   }
   .table-header {
     display: flex;
@@ -677,7 +727,10 @@ function generateReceiptHtml(orderData: any, printerConfig: ImpresoraConfig): st
   ` : ''}
 
   <div class="divider"></div>
-  ${tipoPedidoTexto ? `<div style="font-weight: 900; font-size: ${is58mm ? '12px' : '13px'}; margin-bottom: 2px;">${tipoPedidoTexto}</div>` : ''}
+  <div class="delivery-banner">
+    <div class="delivery-title">${delivery.title}</div>
+    <div class="delivery-sub">${delivery.subtitle}</div>
+  </div>
   <div>Cliente: ${transaccionInfo}</div>
   ${telefonoCliente ? `<div>${telefonoCliente}</div>` : ''}
   <div class="divider"></div>
@@ -898,7 +951,10 @@ function generateCustomerInvoiceHtml(orderData: any, printerConfig: ImpresoraCon
     <div><strong>Doc/NIT:</strong> ${cliente.documentoCliente}</div>
     ${cliente.telefonoCliente ? `<div><strong>Tel:</strong> ${cliente.telefonoCliente.replace(/^Tel:\s*/i, '')}</div>` : ''}
     ${cliente.emailCliente ? `<div><strong>Email:</strong> ${cliente.emailCliente}</div>` : ''}
-    ${cliente.tipoPedidoTexto ? `<div style="font-weight: 900; margin-top: 2px;">${cliente.tipoPedidoTexto}</div>` : ''}
+    ${cliente.tipoPedidoTexto ? `
+      <div style="border: 1.5px solid #000; padding: 2px 4px; margin-top: 4px; text-align: center; font-weight: 900; font-size: ${is58mm ? '11px' : '12px'};">
+        ${cliente.tipoPedidoTexto}
+      </div>` : ''}
   </div>
 
   <div class="table-header">
@@ -998,7 +1054,7 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
         if (!isDone) {
           isDone = true;
           console.error(`Timeout (6s) conectando a impresora de red (${ip}:${port})`);
-          try { device.close(); } catch (_) {}
+          try { device.close(); } catch (_) { }
           resolve(false);
         }
       }, 6000);
@@ -1023,19 +1079,13 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
           let transaccionInfo = 'Cliente no identificado';
           let telefonoCliente = '';
           let codigoTicket = 'N/A';
-          let tipoPedidoTexto = '';
+          const delivery = getDeliveryBadgeInfo(orderData);
 
           if (orderData.TransaccionPago) {
             const tx = orderData.TransaccionPago;
             transaccionInfo = removeAccents(tx.nombreCliente || 'Cliente');
             telefonoCliente = tx.telefonoCliente ? `Tel: ${tx.telefonoCliente}` : '';
             codigoTicket = tx.id ? tx.id.slice(-6).toUpperCase() : 'N/A';
-
-            if (tx.tipoPedido === 'ENTREGA_MESA') {
-              tipoPedidoTexto = removeAccents(`ENTREGAR EN: ${tx.ubicacionEntregaTexto || 'Ubicacion no especificada'}`);
-            } else if (tx.tipoPedido === 'RECOGIDA') {
-              tipoPedidoTexto = 'PARA RECOGER';
-            }
           }
 
           const nombreRest = orderData.Restaurante?.nombreSucursal;
@@ -1105,9 +1155,11 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
             .text(dividerLine)
             .align('lt');
 
-          if (tipoPedidoTexto) {
-            printer.style('b').text(tipoPedidoTexto).style('normal');
-          }
+          // 2. BANNER DESTACADO DE EMPAQUE / ENTREGA
+          printer.align('ct').style('b');
+          const deliveryBox = formatBoxEscpos([delivery.title, delivery.subtitle], lineLength, false);
+          deliveryBox.forEach((l: string) => printer.text(l));
+          printer.style('normal').align('lt');
 
           printer.text(`Cliente: ${transaccionInfo}`);
 
@@ -1137,10 +1189,10 @@ async function printViaNetworkEscpos(orderData: any, printerConfig: ImpresoraCon
             orderData.DetallePedido.forEach((item: any) => {
               const cantNum = item.cantidad || 1;
               totalItems += cantNum;
-              
+
               const desc = removeAccents(item.ProductoMenu?.nombre || 'Producto');
               const cant = cantNum.toString();
-              
+
               printer.style('b');
               const formattedLines = formatItemRow(desc, cant, lineLength);
               formattedLines.forEach(line => printer.text(line));
@@ -1248,7 +1300,7 @@ async function printCustomerInvoiceViaNetworkEscpos(orderData: any, printerConfi
         if (!isDone) {
           isDone = true;
           console.error(`Timeout (6s) imprimiendo factura de red (${ip}:${port})`);
-          try { device.close(); } catch (_) {}
+          try { device.close(); } catch (_) { }
           resolve(false);
         }
       }, 6000);
@@ -1346,7 +1398,10 @@ async function printCustomerInvoiceViaNetworkEscpos(orderData: any, printerConfi
             printer.text(removeAccents(cliente.emailCliente));
           }
           if (cliente.tipoPedidoTexto) {
-            printer.style('b').text(removeAccents(cliente.tipoPedidoTexto)).style('normal');
+            printer.align('ct').style('b');
+            const invoiceDeliveryBox = formatBadgeBoxEscpos(cliente.tipoPedidoTexto, lineLength, true);
+            invoiceDeliveryBox.forEach((l: string) => printer.text(l));
+            printer.style('normal').align('lt');
           }
 
           // 3. TABLA DE 3 COLUMNAS: CANT / DESCRIPCION / TOTAL
@@ -1489,9 +1544,9 @@ async function enqueuePrintJob<T>(printerKey: string, job: () => Promise<T>): Pr
     finishCurrentJob = resolve;
   });
 
-  printerQueues.set(printerKey, previousJob.catch(() => {}).then(() => currentJobPromise));
+  printerQueues.set(printerKey, previousJob.catch(() => { }).then(() => currentJobPromise));
 
-  await previousJob.catch(() => {});
+  await previousJob.catch(() => { });
 
   try {
     const result = await job();
@@ -1576,19 +1631,13 @@ export function printOrderToConsole(orderData: any, motivo?: string) {
   let transaccionInfo = 'Cliente no identificado';
   let telefonoCliente = '';
   let codigoTicket = 'N/A';
-  let tipoPedidoTexto = '';
+  const delivery = getDeliveryBadgeInfo(orderData);
 
   if (orderData.TransaccionPago) {
     const tx = orderData.TransaccionPago;
     transaccionInfo = removeAccents(tx.nombreCliente || 'Cliente');
     telefonoCliente = tx.telefonoCliente ? `Tel: ${tx.telefonoCliente}` : '';
     codigoTicket = tx.id ? tx.id.slice(-6).toUpperCase() : 'N/A';
-
-    if (tx.tipoPedido === 'ENTREGA_MESA') {
-      tipoPedidoTexto = removeAccents(`ENTREGAR EN: ${tx.ubicacionEntregaTexto || 'Ubicacion no especificada'}`);
-    } else if (tx.tipoPedido === 'RECOGIDA') {
-      tipoPedidoTexto = 'PARA RECOGER';
-    }
   }
 
   const { esReserva, fechaProgramadaTexto, horaProgramadaTexto } = getReservaInfo(orderData);
@@ -1639,9 +1688,10 @@ export function printOrderToConsole(orderData: any, motivo?: string) {
   }
 
   lines.push(formatLine(`Cliente: ${transaccionInfo} ${telefonoCliente}`.trim()));
-  if (tipoPedidoTexto) {
-    lines.push(formatLine(`Tipo: ${tipoPedidoTexto}`));
-  }
+  lines.push(subSep);
+  lines.push(centerLine(delivery.title));
+  lines.push(centerLine(delivery.subtitle));
+  lines.push(subSep);
 
   lines.push(separator);
   lines.push(formatLine('ITEMS DEL PEDIDO:'));
@@ -1810,8 +1860,8 @@ export async function testPrinter(config: any): Promise<boolean> {
 
       const is58mm = config.anchoPapel === '58mm';
       const bodyWidth = is58mm ? '46mm' : '64mm';
-      const rolDesc = config.rolCopia === 'COCINA' 
-        ? 'Solo Cocina (Comanda)' 
+      const rolDesc = config.rolCopia === 'COCINA'
+        ? 'Solo Cocina (Comanda)'
         : (config.rolCopia === 'CAJA' ? 'Solo Caja (Factura Cliente)' : 'Ambos (Comanda + Factura)');
 
       const testHtml = `<!DOCTYPE html>
@@ -1873,8 +1923,8 @@ export async function testPrinter(config: any): Promise<boolean> {
         return false;
       }
 
-      const rolDesc = config.rolCopia === 'COCINA' 
-        ? 'Solo Cocina (Comanda)' 
+      const rolDesc = config.rolCopia === 'COCINA'
+        ? 'Solo Cocina (Comanda)'
         : (config.rolCopia === 'CAJA' ? 'Solo Caja (Factura Cliente)' : 'Ambos (Comanda + Factura)');
 
       return new Promise<boolean>((resolve) => {
@@ -1903,7 +1953,7 @@ export async function testPrinter(config: any): Promise<boolean> {
             if (!isDone) {
               isDone = true;
               console.error(`Timeout (5s) en prueba de impresora de red (${ip}:${port})`);
-              try { device.close(); } catch (_) {}
+              try { device.close(); } catch (_) { }
               resolve(false);
             }
           }, 5000);

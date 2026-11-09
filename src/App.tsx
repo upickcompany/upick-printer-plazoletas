@@ -268,6 +268,7 @@ function App() {
             <div>
               <h1 className="text-lg font-black tracking-tight leading-tight flex items-center gap-1.5">
                 UPick <span className="text-red-500 font-extrabold">Printer Plazoletas</span>
+                <span className="text-[10px] bg-neutral-800 text-neutral-400 font-semibold px-1.5 py-0.5 rounded border border-neutral-700 ml-1">v1.2.2</span>
               </h1>
               <p className="text-xs text-neutral-400">Multi-impresora • Spooler Windows USB • Reservas</p>
             </div>
