@@ -79,6 +79,7 @@ console.error = (...args) => {
 import { setupSupabaseRealtime, disconnectSupabase, resumePrintingAndCheckPending } from './supabase'
 import { testPrinter } from './printer'
 import { store } from './store'
+import { initAutoUpdater, setupUpdaterIpc } from './updater'
 
 function createWindow() {
   const iconPath = path.join(process.env.VITE_PUBLIC!, 'icon.png')
@@ -158,6 +159,7 @@ function createWindow() {
 
   ipcMain.handle('get-config', () => {
     return {
+      printerToken: store.get('printerToken') || '',
       email: store.get('email') || '',
       restaurantId: store.get('restaurantId') || '',
       printAdvanceMinutes: store.get('printAdvanceMinutes') || 0,
@@ -168,6 +170,20 @@ function createWindow() {
       printerIp: store.get('printerIp') || '',
       printerPort: store.get('printerPort') || 9100
     }
+  })
+
+  ipcMain.handle('login-with-token', async (_, { token }) => {
+    const cleanToken = (token || '').trim()
+    store.set('printerToken', cleanToken)
+    store.set('email', '')
+    store.set('password', '')
+    return new Promise((resolve) => {
+      setupSupabaseRealtime((status, message) => {
+        win?.webContents.send('supabase-status', status, message)
+        if (status === 'connected') resolve({ success: true, sucursal: message })
+        else if (status === 'error') resolve({ success: false, error: message })
+      })
+    })
   })
 
   ipcMain.handle('login', async (_, { email, password }) => {
@@ -184,6 +200,7 @@ function createWindow() {
 
   ipcMain.handle('logout', async () => {
     store.set('password', '')
+    store.set('printerToken', '')
     await disconnectSupabase()
     win?.webContents.send('supabase-status', 'disconnected')
     return true
@@ -200,6 +217,7 @@ function createWindow() {
   })
 
   ipcMain.handle('save-config', async (_, config) => {
+    if (config.printerToken !== undefined) store.set('printerToken', (config.printerToken || '').trim())
     if (config.email !== undefined) store.set('email', config.email)
     if (config.password) store.set('password', config.password)
     if (config.printAdvanceMinutes !== undefined) {
@@ -223,6 +241,9 @@ function createWindow() {
   ipcMain.handle('test-printer', async (_, printerConfig) => {
     return await testPrinter(printerConfig)
   })
+
+  // Inicializar Auto-Updater
+  initAutoUpdater(win)
 
   // Test active push message to Renderer-process.
   win.webContents.on('did-finish-load', () => {
@@ -267,4 +288,7 @@ app.on('activate', () => {
   }
 })
 
-app.whenReady().then(createWindow)
+app.whenReady().then(() => {
+  setupUpdaterIpc()
+  createWindow()
+})
