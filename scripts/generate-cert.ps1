@@ -1,4 +1,4 @@
-﻿param(
+param(
     [Parameter(Mandatory=$false)]
     [string]$Password = $env:CERT_PASSWORD
 )
