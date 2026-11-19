@@ -13,7 +13,7 @@ export default defineConfig({
         vite: {
           build: {
             rollupOptions: {
-              external: ['escpos', 'escpos-network', 'electron-store', '@supabase/supabase-js']
+              external: ['escpos', 'escpos-network', 'electron-store', '@supabase/supabase-js', 'electron-updater']
             }
           }
         }

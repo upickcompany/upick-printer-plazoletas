@@ -31,6 +31,44 @@ let tokenRefreshTimer: NodeJS.Timeout | null = null;
 let lastStatusCallback: ((status: 'connected' | 'disconnected' | 'error', message?: string) => void) | null = null;
 let isSettingUp = false;
 
+const PRINTER_AUTH_URL = "https://plazoletas.upickcol.com/api/printer/auth";
+
+export async function authenticateWithPrinterToken(token: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    console.log('🔑 [Token Auth] Conectando con servidor de UPick mediante Token de Impresora...');
+    const res = await fetch(PRINTER_AUTH_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ token })
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      const errMsg = errData.error || `Error ${res.status}: ${res.statusText}`;
+      console.warn(`⚠️ [Token Auth] Respuesta de servidor: ${errMsg}`);
+      return { success: false, error: errMsg };
+    }
+
+    const data = await res.json();
+    if (data.success && data.email && data.password) {
+      store.set('email', data.email);
+      store.set('password', data.password);
+      if (data.restaurantId) store.set('restaurantId', data.restaurantId);
+      store.set('printerToken', token);
+      console.log(`✅ [Token Auth] Credenciales resueltas exitosamente para: ${data.nombreSucursal || data.restaurantId}`);
+      return { success: true };
+    }
+
+    return { success: false, error: 'Respuesta inválida del servidor' };
+  } catch (err: any) {
+    console.warn('⚠️ [Token Auth] Error de red al autenticar con token:', err?.message || err);
+    return { success: false, error: err?.message || 'Error de red' };
+  }
+}
+
 function scheduleReconnect(delayMs = 5000, reason = 'Falla de conexión') {
   if (reconnectTimer) clearTimeout(reconnectTimer);
   console.log(`⏳ [Auto-Reconnect] Programando reconexión en ${Math.round(delayMs / 1000)}s (${reason})...`);
@@ -68,6 +106,10 @@ function startTokenRefresh() {
       const { data, error } = await supabase.auth.refreshSession();
       if (error) {
         console.warn('⚠️ [Auth] Falló refresco de token, reautenticando con credenciales guardadas...');
+        const printerToken = store.get('printerToken');
+        if (printerToken) {
+          await authenticateWithPrinterToken(printerToken);
+        }
         const email = store.get('email');
         const password = store.get('password');
         if (email && password) {
@@ -91,7 +133,7 @@ function stopTokenRefresh() {
 
 async function processPrint(orderId: string, fullOrder: any) {
   try {
-    // Verificamos que la orden siga siendo PENDING en printStatus
+    // Verificamos que la orden siga siendo PENDING en printStatus y consultamos su estado actual
     const { data: checkOrder } = await supabase
       .from('PedidoRestaurante')
       .select('printStatus, estado')
@@ -100,6 +142,18 @@ async function processPrint(orderId: string, fullOrder: any) {
 
     if (!checkOrder || checkOrder.printStatus !== 'PENDING') {
       console.log(`Orden no encontrada o ya no está PENDING en impresión, se omite.`);
+      return;
+    }
+
+    // Si la orden ya no está en estado 'PENDING' (por ejemplo, pasó manualmente a 'PREPARANDO', 'LISTO', etc.),
+    // significa que el restaurante ya la vio y la está gestionando. No debemos imprimirla para no causar confusiones en cocina.
+    if (checkOrder.estado !== 'PENDING') {
+      console.log(`⏩ [Omitir Impresión] Orden #${orderId.slice(-6)} ya está en estado '${checkOrder.estado}'. Se omite la comanda para no duplicar trabajo en cocina (ya gestionada manualmente).`);
+      const nextPrintStatus = checkOrder.estado === 'CANCELADO' ? 'FAILED' : 'PRINTED';
+      await supabase
+        .from('PedidoRestaurante')
+        .update({ printStatus: nextPrintStatus })
+        .eq('id', orderId);
       return;
     }
 
@@ -249,9 +303,28 @@ async function handleOrder(orderId: string) {
 
     if (fullOrder.printStatus !== 'PENDING') return;
 
+    // Si la orden ya no está en estado 'PENDING' (fue pasada manualmente a PREPARANDO, LISTO, etc.)
+    if (fullOrder.estado && fullOrder.estado !== 'PENDING') {
+      console.log(`⏩ [Omitir Impresión] Pedido #${orderId.slice(-6)} ya se encuentra en estado '${fullOrder.estado}'. Omitiendo comanda para no duplicar trabajo en cocina.`);
+      const nextPrintStatus = fullOrder.estado === 'CANCELADO' ? 'FAILED' : 'PRINTED';
+      await supabase
+        .from('PedidoRestaurante')
+        .update({ printStatus: nextPrintStatus })
+        .eq('id', orderId);
+      return;
+    }
+
     // Verificar que el estado del pago sea APROBADO
     if (fullOrder.TransaccionPago?.estadoPago !== 'APROBADO') {
-      console.log(`Pedido ${orderId} ignorado por ahora: estadoPago es '${fullOrder.TransaccionPago?.estadoPago}'.`);
+      const estadoPago = fullOrder.TransaccionPago?.estadoPago;
+      console.log(`Pedido ${orderId} ignorado por ahora: estadoPago es '${estadoPago}'.`);
+      if (['RECHAZADO', 'CANCELADO', 'FALLIDO'].includes(estadoPago)) {
+        console.log(`⏹️ Pedido #${orderId.slice(-6)} con pago rechazado/cancelado. Marcando printStatus='FAILED' para limpiar la cola.`);
+        await supabase
+          .from('PedidoRestaurante')
+          .update({ printStatus: 'FAILED' })
+          .eq('id', orderId);
+      }
       return;
     }
 
@@ -297,7 +370,7 @@ async function schedulePendingOrders(restaurantId: string) {
   console.log('Checking for pending orders...');
   const { data: pendingOrders, error } = await supabase
     .from('PedidoRestaurante')
-    .select('id')
+    .select('id, estado')
     .eq('restauranteId', restaurantId)
     .eq('printStatus', 'PENDING');
 
@@ -307,6 +380,15 @@ async function schedulePendingOrders(restaurantId: string) {
   }
 
   for (const record of pendingOrders) {
+    if (record.estado && record.estado !== 'PENDING') {
+      console.log(`⏩ [Sondeo de Respaldo] Orden #${record.id.slice(-6)} pendiente de impresión ya está en '${record.estado}'. Sincronizando printStatus y omitiendo impresión.`);
+      const nextPrintStatus = record.estado === 'CANCELADO' ? 'FAILED' : 'PRINTED';
+      await supabase
+        .from('PedidoRestaurante')
+        .update({ printStatus: nextPrintStatus })
+        .eq('id', record.id);
+      continue;
+    }
     await handleOrder(record.id);
   }
 }
@@ -318,11 +400,31 @@ export async function setupSupabaseRealtime(onStatusChange: (status: 'connected'
     reconnectTimer = null;
   }
 
-  const email = store.get('email');
-  const password = store.get('password');
+  let email = store.get('email');
+  let password = store.get('password');
+  const printerToken = store.get('printerToken');
+
+  // Si tenemos un printerToken, aseguramos que las credenciales provengan de la cuenta de impresora
+  if (printerToken) {
+    if (!email || !password || !email.toLowerCase().startsWith('impresora.')) {
+      console.log('🔑 [Setup] Sincronizando credenciales de impresora con printerToken...');
+      const authRes = await authenticateWithPrinterToken(printerToken);
+      if (authRes.success) {
+        email = store.get('email');
+        password = store.get('password');
+      } else {
+        stopHeartbeat();
+        stopPolling();
+        stopTokenRefresh();
+        onStatusChange('error', `Error con token: ${authRes.error}`);
+        scheduleReconnect(10000, 'Reintento tras fallo de token');
+        return;
+      }
+    }
+  }
 
   if (!email || !password) {
-    console.log('No hay credenciales guardadas, omitiendo setup de Realtime');
+    console.log('No hay credenciales ni token guardado, omitiendo setup de Realtime');
     stopHeartbeat();
     stopPolling();
     stopTokenRefresh();
@@ -345,6 +447,17 @@ export async function setupSupabaseRealtime(onStatusChange: (status: 'connected'
 
     if (authError || !authData.user) {
       console.error('Error de autenticación:', authError?.message);
+
+      // Si tenemos printerToken y falló login, refrescar credenciales frescas con el backend
+      if (printerToken) {
+        console.log('🔄 [Auth Recovery] Reintentando resolver credenciales frescas con printerToken...');
+        const tokenRes = await authenticateWithPrinterToken(printerToken);
+        if (tokenRes.success) {
+          scheduleReconnect(1000, 'Reintento con credenciales frescas tras rotación');
+          return;
+        }
+      }
+
       stopHeartbeat();
       stopPolling();
       stopTokenRefresh();
@@ -400,10 +513,14 @@ export async function setupSupabaseRealtime(onStatusChange: (status: 'connected'
     const restauranteObj = Array.isArray(userData.Restaurante) ? userData.Restaurante[0] : userData.Restaurante;
     const sucursalNombre = (restauranteObj as any)?.nombreSucursal || 'Desconocida';
     console.log(`🟢 Conectado exitosamente a la sucursal: ${sucursalNombre} (${restaurantId})`);
-    const printerToken = (restauranteObj as any)?.printerToken || null;
+    const printerTokenFromDb = (restauranteObj as any)?.printerToken || null;
+    const activeToken = printerToken || printerTokenFromDb;
+    if (activeToken) {
+      store.set('printerToken', activeToken);
+    }
 
     // Iniciar latidos hacia el backend
-    startHeartbeat(restaurantId, printerToken);
+    startHeartbeat(restaurantId, activeToken);
 
     // Iniciar sondeo periódico de respaldo y refresco automático de token
     startPolling(restaurantId);
@@ -411,8 +528,10 @@ export async function setupSupabaseRealtime(onStatusChange: (status: 'connected'
 
     // Si ya había un canal previo, lo cerramos limpiamente antes de abrir uno nuevo
     if (realtimeChannel) {
-      await supabase.removeChannel(realtimeChannel);
+      console.log('🧹 Limpiando canal previo de Supabase Realtime...');
+      const oldChannel = realtimeChannel;
       realtimeChannel = null;
+      await supabase.removeChannel(oldChannel);
     }
 
     console.log(`Configurando Supabase Realtime para Restaurante ID: ${restaurantId}`);
@@ -436,6 +555,17 @@ export async function setupSupabaseRealtime(onStatusChange: (status: 'connected'
 
           // Solo nos interesa si tiene printStatus = PENDING
           if (newRecord && newRecord.printStatus === 'PENDING') {
+            // Si el cambio en el pedido fue que pasó manualmente a PREPARANDO u otro estado
+            if (newRecord.estado && newRecord.estado !== 'PENDING') {
+              console.log(`⏩ [Realtime] Orden #${newRecord.id?.slice(-6)} en estado '${newRecord.estado}'. Omitiendo impresión automática (gestión manual).`);
+              const nextPrintStatus = newRecord.estado === 'CANCELADO' ? 'FAILED' : 'PRINTED';
+              await supabase
+                .from('PedidoRestaurante')
+                .update({ printStatus: nextPrintStatus })
+                .eq('id', newRecord.id);
+              return;
+            }
+
             console.log(`¡Orden detectada como PENDING!`);
             await handleOrder(newRecord.id);
           }
@@ -445,9 +575,12 @@ export async function setupSupabaseRealtime(onStatusChange: (status: 'connected'
         console.log('Supabase Subscription status:', status);
         if (status === 'SUBSCRIBED') {
           onStatusChange('connected', sucursalNombre);
-        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn(`⚠️ [Realtime] Error en canal (${status}). Programando reconexión...`);
           onStatusChange('error', 'Reconectando canal Realtime...');
-          scheduleReconnect(3000, `Canal status=${status}`);
+          scheduleReconnect(5000, `Canal status=${status}`);
+        } else if (status === 'CLOSED') {
+          console.log('ℹ️ [Realtime] Canal cerrado limpiamente.');
         } else {
           onStatusChange('disconnected');
         }

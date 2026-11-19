@@ -25,7 +25,7 @@ export function startHeartbeat(restaurantId: string, printerToken?: string | nul
           restauranteId: restaurantId,
           token: printerToken || undefined,
           status: 'ONLINE',
-          version: '1.2.2',
+          version: '1.3.1',
         }),
       });
 

@@ -14,6 +14,7 @@ export interface ImpresoraConfig {
 
 export interface AppConfig {
   restaurantId: string;
+  printerToken?: string;
   email?: string;
   password?: string;
   printAdvanceMinutes?: number;
@@ -30,6 +31,7 @@ export interface AppConfig {
 export const store = new Store<AppConfig>({
   defaults: {
     restaurantId: '',
+    printerToken: '',
     email: '',
     password: '',
     printAdvanceMinutes: 0,

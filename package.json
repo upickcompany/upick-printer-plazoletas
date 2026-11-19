@@ -1,7 +1,7 @@
 {
   "name": "upick-printer-agent",
   "private": true,
-  "version": "1.2.2",
+  "version": "1.3.1",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
@@ -15,6 +15,7 @@
     "@supabase/supabase-js": "^2.108.1",
     "dotenv": "^17.4.2",
     "electron-store": "^11.0.2",
+    "electron-updater": "^6.8.11",
     "escpos": "^3.0.0-alpha.6",
     "escpos-network": "^3.0.0-alpha.5",
     "escpos-usb": "^3.0.0-alpha.4",
@@ -49,6 +50,13 @@
   "build": {
     "appId": "com.upick.printeragent",
     "productName": "UPick Printer Plazoletas",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "upickcompany",
+        "repo": "upick-printer-plazoletas"
+      }
+    ],
     "win": {
       "target": "nsis",
       "icon": "public/icon.png"
@@ -70,4 +78,3 @@
     "get-pixels": "^3.3.3"
   }
 }
-

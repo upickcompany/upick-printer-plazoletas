@@ -20,6 +20,8 @@ export interface SystemPrinter {
 }
 
 function App() {
+  const [printerToken, setPrinterToken] = useState('')
+  const [authTab, setAuthTab] = useState<'token' | 'manual'>('token')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [sucursal, setSucursal] = useState('')
@@ -37,6 +39,14 @@ function App() {
   const [testingPrinterId, setTestingPrinterId] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<{ id: string; success: boolean; msg: string } | null>(null)
   const [saveFeedback, setSaveFeedback] = useState<string | null>(null)
+  const [updateState, setUpdateState] = useState<{
+    status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
+    version?: string
+    percent?: number
+    error?: string
+  }>({ status: 'idle' })
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false)
+  const [updateFeedback, setUpdateFeedback] = useState<string | null>(null)
 
   // Cargar impresoras nativas de Windows
   const loadSystemPrinters = async () => {
@@ -54,6 +64,12 @@ function App() {
   useEffect(() => {
     // 1. Cargar configuración guardada
     window.ipcRenderer.invoke('get-config').then((config: any) => {
+      if (config.printerToken) {
+        setPrinterToken(config.printerToken)
+        setAuthTab('token')
+      } else if (config.email) {
+        setAuthTab('manual')
+      }
       if (config.email) setEmail(config.email)
       if (config.printAdvanceMinutes !== undefined) setPrintAdvanceMinutes(String(config.printAdvanceMinutes))
       if (config.isPrintingPaused !== undefined) setIsPrintingPaused(Boolean(config.isPrintingPaused))
@@ -97,7 +113,71 @@ function App() {
     window.ipcRenderer.on('main-console-error', (_event: any, ...args: any[]) => {
       console.error('%c[BACKEND ERROR]', 'color: #ef4444; font-weight: bold;', ...args)
     })
+
+    // 5. Escuchar estado del Auto-Updater
+    window.ipcRenderer.on('updater-status', (_event: any, state: any) => {
+      setUpdateState(state)
+    })
+    window.ipcRenderer.invoke('updater-get-state').then((state: any) => {
+      if (state) setUpdateState(state)
+    })
   }, [])
+
+  // Comprobar manualmente actualizaciones
+  const handleCheckForUpdates = async () => {
+    setIsCheckingUpdate(true)
+    setUpdateFeedback(null)
+    try {
+      const res = await window.ipcRenderer.invoke('updater-check-now')
+      if (res?.isDev) {
+        setUpdateFeedback(res.message)
+        setTimeout(() => setUpdateFeedback(null), 6000)
+      } else if (!res?.success) {
+        setUpdateFeedback(`Error al buscar actualizaciones: ${res?.error || 'Desconocido'}`)
+        setTimeout(() => setUpdateFeedback(null), 6000)
+      } else if (res?.updateInfo) {
+        setUpdateFeedback(`Versión disponible: v${res.updateInfo.version}`)
+        setTimeout(() => setUpdateFeedback(null), 4000)
+      } else {
+        setUpdateFeedback('Ya tienes la versión más reciente.')
+        setTimeout(() => setUpdateFeedback(null), 4000)
+      }
+    } catch (err: any) {
+      setUpdateFeedback(`Error: ${err?.message || err}`)
+      setTimeout(() => setUpdateFeedback(null), 6000)
+    } finally {
+      setIsCheckingUpdate(false)
+    }
+  }
+
+  // Reiniciar e instalar actualización descargada
+  const handleInstallUpdate = () => {
+    window.ipcRenderer.invoke('updater-install-now')
+  }
+
+  // Iniciar sesión / vincular mediante Token de Impresora
+  const handleTokenLogin = async () => {
+    if (!printerToken.trim()) {
+      alert('Por favor ingresa el Token de la Impresora (prt_...) obtenido en el panel de UPick.')
+      return
+    }
+    setIsLoggingIn(true)
+    setSaveFeedback(null)
+    try {
+      const res = await window.ipcRenderer.invoke('login-with-token', { token: printerToken.trim() })
+      if (res && res.success) {
+        setSucursal(res.sucursal || '')
+        setSaveFeedback('¡Impresora vinculada y conectada exitosamente!')
+        setTimeout(() => setSaveFeedback(null), 4000)
+      } else {
+        alert('Error al conectar con token: ' + (res?.error || 'Token no válido'))
+      }
+    } catch (err: any) {
+      alert('Error: ' + err.message)
+    } finally {
+      setIsLoggingIn(false)
+    }
+  }
 
   // Iniciar sesión directamente sin necesidad de guardar toda la config
   const handleDirectLogin = async () => {
@@ -125,14 +205,15 @@ function App() {
 
   // Cerrar sesión
   const handleLogout = async () => {
-    if (!confirm('¿Deseas cerrar la sesión actual?')) return
+    if (!confirm('¿Deseas desconectar esta impresora? Dejará de imprimir comandas hasta que vuelva a conectarse.')) return
     setIsLoggingOut(true)
     try {
       await window.ipcRenderer.invoke('logout')
       setPassword('')
+      setPrinterToken('')
       setSucursal('')
       setStatus('disconnected')
-      setSaveFeedback('Sesión cerrada.')
+      setSaveFeedback('Impresora desconectada.')
       setTimeout(() => setSaveFeedback(null), 3000)
     } catch (err: any) {
       console.error('Error al cerrar sesión:', err)
@@ -237,6 +318,7 @@ function App() {
 
     try {
       await window.ipcRenderer.invoke('save-config', {
+        printerToken,
         email,
         password,
         printAdvanceMinutes: Number(printAdvanceMinutes) || 0,
@@ -268,7 +350,7 @@ function App() {
             <div>
               <h1 className="text-lg font-black tracking-tight leading-tight flex items-center gap-1.5">
                 UPick <span className="text-red-500 font-extrabold">Printer Plazoletas</span>
-                <span className="text-[10px] bg-neutral-800 text-neutral-400 font-semibold px-1.5 py-0.5 rounded border border-neutral-700 ml-1">v1.2.2</span>
+                <span className="text-[10px] bg-neutral-800 text-neutral-400 font-semibold px-1.5 py-0.5 rounded border border-neutral-700 ml-1">v1.3.1</span>
               </h1>
               <p className="text-xs text-neutral-400">Multi-impresora • Spooler Windows USB • Reservas</p>
             </div>
@@ -276,6 +358,29 @@ function App() {
 
           {/* Action & Status Badges */}
           <div className="flex items-center gap-2.5">
+            {/* BOTÓN BUSCAR ACTUALIZACIÓN */}
+            <button
+              type="button"
+              onClick={handleCheckForUpdates}
+              disabled={isCheckingUpdate}
+              className="px-2.5 py-1.5 rounded-full text-xs font-semibold bg-neutral-800 hover:bg-neutral-750 text-neutral-300 border border-neutral-700 transition-all flex items-center gap-1.5 active:scale-95 shadow-sm"
+              title="Buscar actualizaciones en GitHub"
+            >
+              {isCheckingUpdate ? (
+                <>
+                  <svg className="w-3.5 h-3.5 animate-spin text-neutral-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  <span>Buscando...</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-xs">🔄</span>
+                  <span className="hidden sm:inline">Actualizaciones</span>
+                </>
+              )}
+            </button>
+
             {/* BOTÓN PAUSAR / REANUDAR IMPRESIONES */}
             <button
               type="button"
@@ -366,96 +471,255 @@ function App() {
           </div>
         )}
 
-        {/* Credenciales Card con Botón Directo de Iniciar Sesión */}
-        <section className="bg-neutral-800/60 border border-neutral-750/80 rounded-2xl p-5 shadow-xl">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-bold uppercase tracking-wider text-neutral-400 flex items-center gap-2">
-              <svg className="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+        {/* Banner de Descarga de Actualización en Progreso */}
+        {updateState.status === 'downloading' && (
+          <div className="bg-blue-500/15 border border-blue-500/40 rounded-2xl p-4 flex items-center justify-between gap-4 text-blue-200 animate-in fade-in">
+            <div className="flex items-center gap-3">
+              <svg className="w-5 h-5 text-blue-400 shrink-0 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
-              Cuenta y Conexión de Supabase
-            </h2>
-            {status === 'connected' && (
-              <span className="text-xs text-emerald-400 font-bold flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-                Autenticado
-              </span>
-            )}
+              <div>
+                <p className="font-bold text-sm">Descargando actualización en segundo plano ({updateState.percent || 0}%)</p>
+                <p className="text-xs text-blue-300/80">La aplicación se actualizará automáticamente al reiniciar.</p>
+              </div>
+            </div>
+            <div className="w-28 bg-neutral-800 rounded-full h-2.5 overflow-hidden border border-blue-500/30 shrink-0">
+              <div className="bg-blue-500 h-full transition-all duration-300" style={{ width: `${updateState.percent || 0}%` }} />
+            </div>
           </div>
+        )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
+        {/* Banner de Actualización Descargada y Lista */}
+        {updateState.status === 'downloaded' && (
+          <div className="bg-emerald-500/20 border border-emerald-500/50 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-emerald-200 shadow-lg shadow-emerald-950/40 animate-in fade-in">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">🎉</span>
+              <div>
+                <p className="font-bold text-sm text-emerald-100">
+                  ¡Nueva versión {updateState.version ? `v${updateState.version}` : ''} lista para instalar!
+                </p>
+                <p className="text-xs text-emerald-300/80">
+                  Se descargó silenciosamente. Puedes reiniciar ahora para aplicar los cambios o se aplicará al reiniciar la PC.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleInstallUpdate}
+              className="w-full sm:w-auto px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-black rounded-xl text-xs shadow-md transition-all active:scale-95 whitespace-nowrap flex items-center justify-center gap-1.5"
+            >
+              🚀 Reiniciar y Actualizar Ahora
+            </button>
+          </div>
+        )}
+
+        {/* Feedback de Búsqueda de Actualizaciones */}
+        {updateFeedback && (
+          <div className="bg-neutral-850 border border-neutral-700 rounded-2xl p-3 px-4 text-neutral-300 text-xs flex items-center justify-between animate-in fade-in">
+            <span>{updateFeedback}</span>
+            <button onClick={() => setUpdateFeedback(null)} className="text-neutral-400 hover:text-white font-bold ml-2">✕</button>
+          </div>
+        )}
+
+        {/* Credenciales Card con Soporte de Token y Reconexión Automática */}
+        <section className="bg-neutral-800/60 border border-neutral-750/80 rounded-2xl p-5 shadow-xl">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
             <div>
-              <label className="block text-xs font-semibold text-neutral-300 mb-1.5">Email Administrador</label>
-              <input
-                type="email"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                placeholder="admin@sucursal.com"
-                className="w-full bg-neutral-900 border border-neutral-700 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-neutral-500 focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all"
-              />
+              <h2 className="text-sm font-bold uppercase tracking-wider text-neutral-400 flex items-center gap-2">
+                <svg className="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+                Conexión y Autenticación del Agente
+              </h2>
+              <p className="text-xs text-neutral-500 mt-0.5">
+                {authTab === 'token'
+                  ? 'Modo Desatendido: reconexión remota automática permanente.'
+                  : 'Modo Manual con credenciales directas de Supabase.'}
+              </p>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-neutral-300 mb-1.5">Contraseña</label>
-              <input
-                type="password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full bg-neutral-900 border border-neutral-700 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-neutral-500 focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all"
-              />
-            </div>
+            <div className="flex items-center gap-2">
+              {/* Selector de Pestaña */}
+              {status !== 'connected' && (
+                <div className="flex bg-neutral-900 p-0.5 rounded-xl border border-neutral-700/80 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setAuthTab('token')}
+                    className={`px-3 py-1 rounded-lg font-bold transition-all ${
+                      authTab === 'token'
+                        ? 'bg-red-600 text-white shadow-sm'
+                        : 'text-neutral-400 hover:text-neutral-200'
+                    }`}
+                  >
+                    🔑 Token (Recomendado)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAuthTab('manual')}
+                    className={`px-3 py-1 rounded-lg font-bold transition-all ${
+                      authTab === 'manual'
+                        ? 'bg-neutral-750 text-white shadow-sm'
+                        : 'text-neutral-400 hover:text-neutral-200'
+                    }`}
+                  >
+                    Usuario / Clave
+                  </button>
+                </div>
+              )}
 
-            <div>
-              <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
-                Anticipación reservas (Min)
-              </label>
-              <input
-                type="number"
-                min="0"
-                value={printAdvanceMinutes}
-                onChange={e => setPrintAdvanceMinutes(e.target.value)}
-                placeholder="0 = Inmediato"
-                className="w-full bg-neutral-900 border border-neutral-700 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-neutral-500 focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all"
-              />
-            </div>
-
-            <div>
-              {status === 'connected' ? (
-                <button
-                  type="button"
-                  onClick={handleLogout}
-                  disabled={isLoggingOut}
-                  className="w-full py-2.5 px-4 bg-neutral-800 hover:bg-neutral-750 border border-neutral-700 text-neutral-300 rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center justify-center gap-1.5"
-                >
-                  {isLoggingOut ? 'Cerrando...' : 'Cerrar Sesión'}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleDirectLogin}
-                  disabled={isLoggingIn || !email || !password}
-                  className="w-full py-2.5 px-4 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold shadow-lg shadow-red-600/30 transition-all active:scale-95 flex items-center justify-center gap-2"
-                >
-                  {isLoggingIn ? (
-                    <>
-                      <svg className="w-3.5 h-3.5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
-                      Conectando...
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
-                      </svg>
-                      Iniciar Sesión
-                    </>
-                  )}
-                </button>
+              {status === 'connected' && (
+                <span className="text-xs text-emerald-400 font-bold flex items-center gap-1.5 bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                  Conectado {printerToken ? 'vía Token' : 'vía Usuario'}
+                </span>
               )}
             </div>
           </div>
+
+          {authTab === 'token' ? (
+            /* MODO TOKEN (RECOMENDADO / DESATENDIDO) */
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+              <div className="sm:col-span-6 lg:col-span-7">
+                <label className="block text-xs font-semibold text-neutral-300 mb-1.5 flex items-center justify-between">
+                  <span>Token de Impresora (Plazoletas)</span>
+                  <span className="text-[10px] text-neutral-500 font-normal">Panel Web &gt; Editar Restaurante</span>
+                </label>
+                <input
+                  type="text"
+                  value={printerToken}
+                  onChange={e => setPrinterToken(e.target.value)}
+                  placeholder="prt_xxxxxxxxxxxxxxxxxxxxxxxx..."
+                  disabled={status === 'connected'}
+                  className="w-full bg-neutral-900 border border-neutral-700 rounded-xl px-3.5 py-2.5 text-sm font-mono text-white placeholder-neutral-600 focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all disabled:opacity-70"
+                />
+              </div>
+
+              <div className="sm:col-span-3 lg:col-span-2">
+                <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                  Anticipación (Min)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={printAdvanceMinutes}
+                  onChange={e => setPrintAdvanceMinutes(e.target.value)}
+                  placeholder="0 = Inmediato"
+                  className="w-full bg-neutral-900 border border-neutral-700 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-neutral-500 focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all"
+                />
+              </div>
+
+              <div className="sm:col-span-3 lg:col-span-3">
+                {status === 'connected' ? (
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    disabled={isLoggingOut}
+                    className="w-full py-2.5 px-4 bg-neutral-800 hover:bg-neutral-750 border border-neutral-700 text-neutral-300 rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                  >
+                    {isLoggingOut ? 'Desconectando...' : 'Desconectar Impresora'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleTokenLogin}
+                    disabled={isLoggingIn || !printerToken.trim()}
+                    className="w-full py-2.5 px-4 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold shadow-lg shadow-red-600/30 transition-all active:scale-95 flex items-center justify-center gap-2"
+                  >
+                    {isLoggingIn ? (
+                      <>
+                        <svg className="w-3.5 h-3.5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        Vinculando...
+                      </>
+                    ) : (
+                      <>
+                        <span>🔗</span>
+                        Vincular y Conectar
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            /* MODO MANUAL (EMAIL / PASSWORD) */
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1.5">Email Administrador</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="admin@sucursal.com"
+                  disabled={status === 'connected'}
+                  className="w-full bg-neutral-900 border border-neutral-700 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-neutral-500 focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all disabled:opacity-70"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1.5">Contraseña</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  disabled={status === 'connected'}
+                  className="w-full bg-neutral-900 border border-neutral-700 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-neutral-500 focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all disabled:opacity-70"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                  Anticipación reservas (Min)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={printAdvanceMinutes}
+                  onChange={e => setPrintAdvanceMinutes(e.target.value)}
+                  placeholder="0 = Inmediato"
+                  className="w-full bg-neutral-900 border border-neutral-700 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-neutral-500 focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all"
+                />
+              </div>
+
+              <div>
+                {status === 'connected' ? (
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    disabled={isLoggingOut}
+                    className="w-full py-2.5 px-4 bg-neutral-800 hover:bg-neutral-750 border border-neutral-700 text-neutral-300 rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                  >
+                    {isLoggingOut ? 'Cerrando...' : 'Cerrar Sesión'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleDirectLogin}
+                    disabled={isLoggingIn || !email || !password}
+                    className="w-full py-2.5 px-4 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold shadow-lg shadow-red-600/30 transition-all active:scale-95 flex items-center justify-center gap-2"
+                  >
+                    {isLoggingIn ? (
+                      <>
+                        <svg className="w-3.5 h-3.5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        Conectando...
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+                        </svg>
+                        Iniciar Sesión
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </section>
 
         {/* Impresoras Section */}
